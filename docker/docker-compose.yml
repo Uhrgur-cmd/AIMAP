@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aimap
+      POSTGRES_PASSWORD: aimap
+      POSTGRES_DB: aimap
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aimap"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      DATABASE_URL: postgresql://aimap:aimap@postgres:5432/aimap
+      SIEMENS_S7_URL: http://siemens-s7:8300
+      SIEMENS_OPCUA_URL: http://siemens-browser:8200
+      ROCKWELL_URL: http://rockwell:8100
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: llama3.1:8b
+      UPLOAD_PATH: /app/uploads
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+  collector:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.collector
+    environment:
+      BACKEND_URL: http://backend:3000
+      SIEMENS_S7_URL: http://siemens-s7:8300
+      SIEMENS_OPCUA_URL: http://siemens-browser:8200
+      ROCKWELL_URL: http://rockwell:8100
+      POLL_INTERVAL: "1000"
+    depends_on:
+      - backend
+
+  # Local LLM for AI Mapping (no internet, no API costs)
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    # Uncomment for GPU acceleration:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - capabilities: [gpu]
+
+  # Existing connectors (from ct-plc-connectors)
+  siemens-s7:
+    build:
+      context: ..
+      dockerfile: connectors/docker/Dockerfile.siemens-s7
+    ports:
+      - "8300:8300"
+
+  siemens-browser:
+    build:
+      context: ..
+      dockerfile: connectors/docker/Dockerfile.siemens-browser
+    ports:
+      - "8200:8200"
+
+  rockwell:
+    build:
+      context: ..
+      dockerfile: connectors/docker/Dockerfile.rockwell
+    ports:
+      - "8100:8100"
+
+volumes:
+  pgdata:
+  uploads:
+  ollama-models:

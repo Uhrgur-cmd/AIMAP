@@ -1,0 +1,27 @@
+{{- if and .Values.siemensS7.ingress.enabled .Values.siemensS7.ingress.middlewares.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ .Values.siemensS7.ingress.middlewares.strip.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: siemens-s7
+spec:
+  stripPrefix:
+    prefixes:
+{{ toYaml .Values.siemensS7.ingress.middlewares.strip.prefixes | nindent 6 }}
+---
+{{- if .Values.siemensS7.ingress.middlewares.apiKey.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ .Values.siemensS7.ingress.middlewares.apiKey.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: siemens-s7
+spec:
+  headers:
+    customRequestHeaders:
+      X-API-Key: {{ .Values.siemensS7.ingress.middlewares.apiKey.key | quote }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,13 @@
+{
+  "name": "aimap-collector",
+  "version": "0.1.0",
+  "description": "PLC Signal Mapping Platform – Collector/Writer Service",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "expr-eval": "^2.0.2",
+    "dotenv": "^16.4.7"
+  }
+}

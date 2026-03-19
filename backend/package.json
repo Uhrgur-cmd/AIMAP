@@ -1,0 +1,26 @@
+{
+  "name": "aimap-backend",
+  "version": "0.1.0",
+  "description": "PLC Signal Mapping Platform – Backend API",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "migrate": "node src/db/migrate.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.13.1",
+    "adm-zip": "^0.5.16",
+    "fast-xml-parser": "^4.5.1",
+    "expr-eval": "^2.0.2",
+    "uuid": "^10.0.0",
+    "dotenv": "^16.4.7",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}

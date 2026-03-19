@@ -1,0 +1,39 @@
+{{- if .Values.rockwell.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rockwell-connector
+  namespace: {{ .Values.namespace }}
+  annotations:
+    {{- with .Values.rockwell.ingress.annotations }}
+{{ toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.rockwell.ingress.middlewares.enabled }}
+    traefik.ingress.kubernetes.io/router.middlewares: >
+      {{ .Values.namespace }}-{{ .Values.rockwell.ingress.middlewares.strip.name }}@kubernetescrd
+      {{- if .Values.rockwell.ingress.middlewares.apiKey.enabled }}
+      ,{{ .Values.namespace }}-{{ .Values.rockwell.ingress.middlewares.apiKey.name }}@kubernetescrd
+      {{- end }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.rockwell.ingress.className | default "traefik" }}
+  rules:
+    - host: {{ .Values.rockwell.ingress.host }}
+      http:
+        paths:
+          - path: {{ .Values.rockwell.ingress.path | default "/" }}
+            pathType: {{ .Values.rockwell.ingress.pathType | default "Prefix" }}
+            backend:
+              service:
+                name: rockwell-connector
+                port:
+                  number: {{ .Values.rockwell.port }}
+  {{- if .Values.rockwell.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.rockwell.ingress.host }}
+      {{- if .Values.rockwell.ingress.tls.secretName }}
+      secretName: {{ .Values.rockwell.ingress.tls.secretName }}
+      {{- end }}
+  {{- end }}
+{{- end }}

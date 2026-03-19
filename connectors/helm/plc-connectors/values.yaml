@@ -1,0 +1,111 @@
+namespace: maen-ct-gate
+
+rockwell:
+  enabled: true
+  image: artifacts.ws.contitech.cloud/ctmanusdocker-it-ccoqi-smtfc-test-dev/rockwell-connector:0.1.3
+  port: 8100
+  service:
+    type: ClusterIP
+
+  ingress:
+    enabled: true
+    className: traefik
+    host: ffk00084x.ct-ind.com
+    path: /rockwell
+    pathType: Prefix
+    annotations:
+      # exemplo: roteamento, timeouts, TLS redirect etc.
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      traefik.ingress.kubernetes.io/router.tls: "true"
+    tls:
+      enabled: true
+      # secretName: traefik-cert
+
+    middlewares:
+      enabled: true
+      strip:
+        name: rockwell-strip
+        prefixes:
+          - /rockwell
+      apiKey:
+        enabled: false
+        name: rockwell-apikey
+        key: "SUA_API_KEY_AQUI"
+
+siemensBrowser:
+  enabled: true
+  image: artifacts.ws.contitech.cloud/ctmanusdocker-it-ccoqi-smtfc-test-dev/siemens-browser:0.1.3
+  port: 8200
+
+  service:
+    type: ClusterIP
+
+  ingress:
+    enabled: true
+    className: traefik
+    host: ffk00084x.ct-ind.com
+    path: /opcua
+    pathType: Prefix
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      traefik.ingress.kubernetes.io/router.tls: "true"
+    tls:
+      enabled: true
+      # secretName: traefik-cert
+
+    middlewares:
+      enabled: true
+      strip:
+        name: siemens-opcua-strip
+        prefixes:
+          - /opcua
+      apiKey:
+        enabled: false
+        name: siemens-opcua-apikey
+        key: "CHANGE_ME_IF_NEEDED"
+
+siemensS7:
+  enabled: true
+  image: artifacts.ws.contitech.cloud/ctmanusdocker-it-ccoqi-smtfc-test-dev/siemens-s7:0.1.3
+  port: 8300
+
+  service:
+    type: ClusterIP
+
+  ingress:
+    enabled: true
+    className: traefik
+    host: ffk00084x.ct-ind.com
+    path: /s7
+    pathType: Prefix
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      traefik.ingress.kubernetes.io/router.tls: "true"
+    tls:
+      enabled: true
+      # secretName: traefik-cert
+      
+    middlewares:
+      enabled: true
+      strip:
+        name: siemens-s7-strip
+        prefixes:
+          - /s7
+      apiKey:
+        enabled: false
+        name: siemens-s7-apikey
+        key: "CHANGE_ME_IF_NEEDED"
+
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+config:
+  # Example JSON payloads if you want to mount static configuration files into pods.
+  rockwellJson: |
+    { "example": "configure IPs via query params or use a side-config service" }
+  siemensBrowserJson: |
+    { "example": "endpoints managed externally (OPC UA)" }
+  siemensS7Json: |
+    { "example": "target DB ranges configurable via API or values" }
