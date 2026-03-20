@@ -19,8 +19,8 @@ export default function Sidebar({ machines, selected, onSelect, onAdd, onEdit, o
     <aside className="w-64 bg-gray-800 border-r border-gray-700 flex flex-col">
       {/* Header */}
       <div className="p-4 border-b border-gray-700">
-        <h1 className="text-lg font-bold text-white">AIMAP</h1>
-        <p className="text-xs text-gray-400 mt-1">PLC Signal Mapping</p>
+        <img src="/ct-gate-logo.svg" alt="CT Gate" className="h-12 mb-1" />
+        <p className="text-xs text-gray-400">PLC Signal Mapping</p>
       </div>
 
       {/* Machine list */}

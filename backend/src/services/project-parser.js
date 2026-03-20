@@ -2,11 +2,24 @@ const AdmZip = require('adm-zip');
 const { XMLParser } = require('fast-xml-parser');
 const path = require('path');
 const fs = require('fs');
+const { decodeMC7, extractLogicChains } = require('./mc7-decoder');
 
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
   isArray: (name) => ['Member', 'Subelement', 'Section', 'SW.Blocks.CompileUnit', 'Comment', 'MultiLanguageText', 'Component'].includes(name),
+  removeNSPrefix: true
+});
+
+// Second parser with preserveOrder for correct SCL token stream extraction.
+// fast-xml-parser without preserveOrder groups elements by tag name and loses
+// the original document order, which scrambles SCL code (operators end up in
+// the wrong position). This parser keeps every element in document order so
+// we can reconstruct the SCL source faithfully.
+const orderedXmlParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '@_',
+  preserveOrder: true,
   removeNSPrefix: true
 });
 
@@ -135,7 +148,8 @@ function parseTiaProject(filePath, plcType) {
       if (meta) blockMetadata[entry.entryName] = meta;
 
       extractTiaBlocks(parsed, result);
-      extractTiaNetworks(parsed, result, meta);
+      // Pass raw XML so extractTiaNetworks can use the ordered parser for SCL
+      extractTiaNetworks(parsed, result, meta, content);
     } catch (e) { /* skip unparseable XML */ }
   }
 
@@ -192,12 +206,24 @@ function extractTiaBlocks(parsed, result) {
       variables: []
     };
 
-    const interfaces = findAllDeep(db, 'SW.Blocks.Interface');
+    // TIA V13-V16: Interface is under SW.Blocks.Interface
+    // TIA V17+/V19: Interface is directly in AttributeList.Interface
+    let interfaces = findAllDeep(db, 'SW.Blocks.Interface');
+    if (interfaces.length === 0) {
+      // Try AttributeList.Interface (TIA V19 format)
+      const attrInterface = getNestedValue(db, 'AttributeList', 'Interface');
+      if (attrInterface) interfaces = [attrInterface];
+    }
     for (const iface of interfaces) {
-      const sections = findAllDeep(iface, 'Section');
+      // Sections might be directly under Interface or under Interface.Sections
+      let sections = findAllDeep(iface, 'Section');
+      if (sections.length === 0 && iface.Sections) {
+        const s = iface.Sections.Section;
+        sections = Array.isArray(s) ? s : (s ? [s] : []);
+      }
       for (const section of Array.isArray(sections) ? sections : [sections]) {
         const sectionName = section['@_Name'] || 'Static';
-        if (['Static', 'Input', 'Output', 'InOut'].includes(sectionName)) {
+        if (['Static', 'Input', 'Output', 'InOut', 'Temp'].includes(sectionName)) {
           extractMembers(section, block.variables, `DB${dbNumber}`, '');
         }
       }
@@ -257,66 +283,424 @@ function extractMembers(node, variables, dbPrefix, parentPath) {
 
 /**
  * Extract network comments + logic from TIA CompileUnit elements.
- * Now resolves block names and extracts logic expressions.
+ * Extracts SCL code from token streams and identifies assignments (dependencies).
+ *
+ * Uses TWO parsers:
+ * - The standard xmlParser (no preserveOrder) for metadata: network number, comments,
+ *   Access/Symbol/Component references (works fine without order).
+ * - The orderedXmlParser (preserveOrder:true) for SCL token stream reconstruction,
+ *   because the token order is critical for correct code output.
+ *
+ * @param {object} parsed - Result from the standard xmlParser (for metadata).
+ * @param {object} result - Accumulator for blocks/networks.
+ * @param {object} blockMeta - Block name/type metadata.
+ * @param {string} [rawXml] - Original XML string; when provided the ordered parser
+ *                             is used for SCL extraction.
  */
-function extractTiaNetworks(parsed, result, blockMeta) {
+function extractTiaNetworks(parsed, result, blockMeta, rawXml) {
   const compileUnits = findAllDeep(parsed, 'SW.Blocks.CompileUnit');
 
-  for (const cu of compileUnits) {
+  // Parse with the ordered parser once per file (only when rawXml is available)
+  let orderedCompileUnits = null;
+  if (rawXml) {
+    try {
+      const orderedParsed = orderedXmlParser.parse(rawXml);
+      orderedCompileUnits = findAllDeepOrdered(orderedParsed, 'SW.Blocks.CompileUnit');
+    } catch (e) { /* fall back to unordered extraction */ }
+  }
+
+  for (let cuIdx = 0; cuIdx < compileUnits.length; cuIdx++) {
+    const cu = compileUnits[cuIdx];
     const networkNumber = parseInt(cu['@_ID'] || cu['@_Number'] || '0');
     const comment = extractComment(cu);
-
-    // Resolve block name from metadata passed from the file-level parse
     const blockName = (blockMeta && blockMeta.blockName) || 'Unknown';
 
-    // Extract all referenced signals via Access elements
+    // Extract SCL code from ordered parse tree if available, else fall back
+    let scl = '';
+    if (orderedCompileUnits && cuIdx < orderedCompileUnits.length) {
+      scl = extractSclFromTokens(orderedCompileUnits[cuIdx]);
+    } else {
+      scl = extractSclFromTokensLegacy(cu);
+    }
+
+    // Extract all referenced signals via Access elements (unordered parser is fine here)
     const referencedSignals = [];
     const accessEntries = findAllDeep(cu, 'Access');
     for (const access of accessEntries) {
+      if (access['@_Scope'] === 'LiteralConstant' || access['@_Scope'] === 'TypedConstant') continue;
       const components = findAllDeep(access, 'Component');
       if (components.length > 0) {
         const addr = components.map(c => c['@_Name'] || (typeof c === 'string' ? c : '')).filter(Boolean).join('.');
-        if (addr && !referencedSignals.includes(addr)) {
+        if (addr && !referencedSignals.includes(addr) && addr.length > 1) {
           referencedSignals.push(addr);
         }
       }
     }
 
-    // Try to extract logic from LAD/FBD structure
-    const logic = extractNetworkLogic(cu, referencedSignals);
+    // Extract assignment dependencies from SCL
+    const assignments = extractSclAssignments(scl, referencedSignals);
 
-    // Only add if there's a comment OR referenced signals (semantic value)
-    if (comment || referencedSignals.length > 0) {
+    // Add the network with SCL logic
+    if (comment || referencedSignals.length > 0 || scl) {
       result.networks.push({
         block: blockName,
         network_number: networkNumber,
         comment: comment || null,
         signals_referenced: referencedSignals,
-        logic: logic
+        logic: scl ? scl.substring(0, 500) : null
+      });
+    }
+
+    // Add individual assignment chains as separate network entries for the cross-reference
+    for (const assign of assignments) {
+      result.networks.push({
+        block: blockName,
+        network_number: networkNumber,
+        comment: `SCL: ${assign.output} := ${assign.expression}`,
+        signals_referenced: assign.inputs,
+        logic: assign.fullLine
       });
     }
   }
 }
 
 /**
- * Try to extract logic expression from LAD/FBD network structure.
- * Looks for Call, Contact, Coil elements and builds expression string.
+ * Rebuild SCL source code from TIA XML token stream (ordered parser format).
+ *
+ * With preserveOrder:true, every XML element becomes an object with a single
+ * tag-name key whose value is an array of children, plus an optional ':@' key
+ * holding attributes. Children appear in document order, so the SCL tokens,
+ * symbols, blanks, and newlines are reconstructed in the correct sequence.
+ *
+ * Format examples:
+ *   {Token: [],      ':@': {'@_Text': ':='}}
+ *   {Blank: [],      ':@': {'@_Num': '1'}}
+ *   {NewLine: []}
+ *   {Access: [{Symbol: [{Component: [], ':@': {'@_Name': 'x'}}]}], ':@': {'@_Scope': 'GlobalVariable'}}
+ *   {Constant: [{ConstantValue: [{...}]}]}
  */
-function extractNetworkLogic(compileUnit, references) {
-  // Look for SCL code (plaintext, easiest)
-  const sclTexts = findAllDeep(compileUnit, 'StructuredText');
-  if (sclTexts.length > 0) {
-    const scl = sclTexts.map(t => typeof t === 'string' ? t : (t['#text'] || '')).join('\n').trim();
-    if (scl) return scl;
+function extractSclFromTokens(orderedNode) {
+  if (!orderedNode || typeof orderedNode !== 'object') return '';
+  let text = '';
+
+  // SCL keywords that get spaces around them for readability
+  const SPACED_KEYWORDS = new Set([
+    ':=', ';', 'IF', 'THEN', 'ELSE', 'ELSIF', 'END_IF',
+    'FOR', 'TO', 'DO', 'END_FOR', 'WHILE', 'END_WHILE',
+    'REPEAT', 'UNTIL', 'END_REPEAT',
+    'AND', 'OR', 'NOT', 'XOR', 'MOD',
+    'CASE', 'OF', 'END_CASE',
+    'REGION', 'END_REGION',
+    'RETURN', 'EXIT', 'CONTINUE',
+    '<', '>', '<=', '>=', '<>', '=',
+    '+', '-', '*', '/'
+  ]);
+
+  function walk(node) {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child);
+      return;
+    }
+
+    // Each ordered element is { TagName: [children], ':@': {attrs} }
+    const keys = Object.keys(node).filter(k => k !== ':@');
+    const attrs = node[':@'] || {};
+
+    for (const tag of keys) {
+      if (tag === 'Token') {
+        const t = attrs['@_Text'] || '';
+        if (t) {
+          if (SPACED_KEYWORDS.has(t)) {
+            text += ' ' + t + ' ';
+          } else {
+            text += t;
+          }
+        }
+      } else if (tag === 'StlToken') {
+        // STL/AWL statement list token (e.g. "L", "T", "A", "=", "CALL")
+        const t = attrs['@_Text'] || '';
+        if (t === 'EMPTY_LINE') {
+          text += '\n';
+        } else if (t === 'COMMENT') {
+          // Skip – comment text is in a separate element
+        } else if (t) {
+          text += t + ' ';
+        }
+      } else if (tag === 'StlStatement') {
+        // STL statement – recurse into children, then add newline
+        const children = node[tag];
+        if (Array.isArray(children)) {
+          for (const child of children) walk(child);
+        }
+        text += '\n';
+      } else if (tag === 'Blank') {
+        const num = parseInt(attrs['@_Num'] || '1') || 1;
+        text += ' '.repeat(num);
+      } else if (tag === 'NewLine') {
+        text += '\n';
+      } else if (tag === 'LineComment') {
+        // Skip line comments in SCL output (they are metadata, not code)
+      } else if (tag === 'Comment') {
+        // Skip XML comment elements
+      } else if (tag === 'Parameter') {
+        // Function call parameter – emit "Name" then recurse into children
+        const paramName = attrs['@_Name'] || '';
+        if (paramName) text += paramName;
+        const children = node[tag];
+        if (Array.isArray(children)) {
+          for (const child of children) walk(child);
+        }
+      } else if (tag === 'Text') {
+        // Inline text node (e.g. REGION description text)
+        const children = node[tag];
+        if (Array.isArray(children)) {
+          for (const child of children) {
+            if (child && child['#text'] !== undefined) text += String(child['#text']);
+          }
+        }
+      } else if (tag === 'Access') {
+        const scope = attrs['@_Scope'] || '';
+        const children = node[tag];
+        if (scope === 'LiteralConstant' || scope === 'TypedConstant') {
+          // Extract constant value (e.g. True, 42, W#16#01)
+          text += extractConstantOrdered(children);
+        } else if (scope === 'LocalConstant' || scope === 'AddressConstant') {
+          // Named constant (e.g. ERROR_INVALID_MODE) or address constant
+          text += extractNamedConstantOrdered(children);
+        } else if (scope === 'Call') {
+          // Function/instruction call – recurse into Instruction children
+          // which contain Token, Parameter, Access elements in order
+          if (Array.isArray(children)) {
+            for (const child of children) {
+              if (child && child.Instruction) {
+                const instrAttrs = child[':@'] || {};
+                const instrName = instrAttrs['@_Name'] || '';
+                if (instrName) text += instrName;
+                // Recurse into instruction children (tokens, parameters)
+                walk(child.Instruction);
+              }
+            }
+          }
+        } else {
+          // Symbol access – extract component names
+          text += extractSymbolOrdered(children);
+        }
+      } else {
+        // Recurse into children (e.g. FlgNet, Parts, StatementList, etc.)
+        const children = node[tag];
+        if (Array.isArray(children)) {
+          for (const child of children) walk(child);
+        }
+      }
+    }
   }
 
-  // Look for LAD/FBD elements (Contact = AND/OR input, Coil = output)
+  /**
+   * Extract a symbol reference from ordered Access children.
+   * Structure: [{Symbol: [{Component: [], ':@': {'@_Name': 'part1'}}, ...]}]
+   */
+  function extractSymbolOrdered(children) {
+    if (!Array.isArray(children)) return '';
+    const parts = [];
+    for (const child of children) {
+      if (!child || typeof child !== 'object') continue;
+      if (child.Symbol) {
+        const symbolChildren = child.Symbol;
+        if (Array.isArray(symbolChildren)) {
+          for (const sc of symbolChildren) {
+            if (sc && sc.Component !== undefined) {
+              const compAttrs = sc[':@'] || {};
+              const name = compAttrs['@_Name'] || '';
+              if (name) parts.push(name);
+            }
+          }
+        }
+      }
+    }
+    return parts.length > 0 ? parts.join('.') : '';
+  }
+
+  /**
+   * Extract a named constant from ordered Access children (LocalConstant scope).
+   * Structure: [{Constant: [], ':@': {'@_Name': 'ERROR_INVALID_MODE'}}]
+   */
+  function extractNamedConstantOrdered(children) {
+    if (!Array.isArray(children)) return '';
+    for (const child of children) {
+      if (!child || typeof child !== 'object') continue;
+      if (child.Constant !== undefined) {
+        const constAttrs = child[':@'] || {};
+        if (constAttrs['@_Name']) return constAttrs['@_Name'];
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Extract a constant value from ordered Access children.
+   * Structure: [{Constant: [{ConstantValue: [{...}], ':@': {...}}]}]
+   *         or [{Constant: [{StringValue: [{...}]}]}]
+   */
+  function extractConstantOrdered(children) {
+    if (!Array.isArray(children)) return '';
+    for (const child of children) {
+      if (!child || typeof child !== 'object') continue;
+      if (child.Constant) {
+        const constChildren = child.Constant;
+        if (!Array.isArray(constChildren)) continue;
+        for (const cc of constChildren) {
+          if (cc.ConstantValue !== undefined) {
+            // ConstantValue children contain text nodes
+            const cvChildren = cc.ConstantValue;
+            if (Array.isArray(cvChildren)) {
+              for (const cv of cvChildren) {
+                if (cv && cv['#text'] !== undefined) return String(cv['#text']);
+              }
+            }
+            // Might also be empty array with value in ':@'
+            const cvAttrs = cc[':@'] || {};
+            if (cvAttrs['@_Value']) return cvAttrs['@_Value'];
+            return '0';
+          }
+          if (cc.StringValue !== undefined) {
+            const svChildren = cc.StringValue;
+            if (Array.isArray(svChildren)) {
+              for (const sv of svChildren) {
+                if (sv && sv['#text'] !== undefined) return "'" + String(sv['#text']) + "'";
+              }
+            }
+            return "''";
+          }
+        }
+      }
+    }
+    return '';
+  }
+
+  // Walk the ordered node (could be array or object)
+  walk(orderedNode);
+
+  return text
+    .replace(/\n{3,}/g, '\n\n')   // collapse excessive blank lines
+    .replace(/  +/g, ' ')          // collapse multiple spaces (but preserve newlines)
+    .trim();
+}
+
+/**
+ * Legacy SCL extraction from the unordered parser.
+ * Used as fallback when rawXml is not available (e.g. Step7 XML path).
+ * NOTE: This does NOT produce correct token order – it is only a best-effort fallback.
+ */
+function extractSclFromTokensLegacy(node) {
+  if (!node || typeof node !== 'object') return '';
+  let text = '';
+
+  function walk(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) { obj.forEach(walk); return; }
+
+    for (const key of Object.keys(obj)) {
+      if (key === 'Blank') { text += ' '; continue; }
+      if (key === 'NewLine') { text += '\n'; continue; }
+      if (key === 'Token') {
+        const tks = Array.isArray(obj[key]) ? obj[key] : [obj[key]];
+        for (const tk of tks) {
+          if (tk && tk['@_Text']) {
+            const t = tk['@_Text'];
+            if (t === ':=' || t === ';' || t === 'IF' || t === 'THEN' || t === 'ELSE' ||
+                t === 'ELSIF' || t === 'END_IF' || t === 'FOR' || t === 'TO' || t === 'DO' ||
+                t === 'END_FOR' || t === 'AND' || t === 'OR' || t === 'NOT' || t === 'CASE' ||
+                t === 'OF' || t === 'END_CASE' || t === 'REGION' || t === 'END_REGION') {
+              text += ' ' + t + ' ';
+            } else {
+              text += t;
+            }
+          }
+        }
+        continue;
+      }
+      if (key === 'Access') {
+        const accs = Array.isArray(obj[key]) ? obj[key] : [obj[key]];
+        for (const a of accs) {
+          if (a && a['Symbol']) {
+            const comps = a['Symbol']['Component'] || [];
+            const arr = Array.isArray(comps) ? comps : [comps];
+            text += arr.map(c => c['@_Name'] || '').filter(Boolean).join('.');
+            text += ' ';
+          } else if (a && a['Constant']) {
+            const c = a['Constant'];
+            if (c['StringValue']) {
+              const sv = typeof c['StringValue'] === 'string' ? c['StringValue'] : (c['StringValue']['#text'] || '');
+              text += "'" + sv + "'";
+            } else if (c['ConstantValue']) {
+              text += typeof c['ConstantValue'] === 'object' ? (c['ConstantValue']['#text'] || '0') : c['ConstantValue'];
+            }
+            text += ' ';
+          }
+        }
+        continue;
+      }
+      if (key === 'Comment' || key.startsWith('@_')) continue;
+      walk(obj[key]);
+    }
+  }
+
+  walk(node);
+  return text.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * Extract assignment statements from SCL code.
+ * Finds patterns like "output := input" or "output := expr AND expr"
+ * Returns array of {output, inputs[], expression, fullLine}
+ */
+function extractSclAssignments(scl, allRefs) {
+  if (!scl) return [];
+  const assignments = [];
+
+  // Split by lines and find := assignments
+  const lines = scl.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.includes(':=')) continue;
+
+    // Split on :=
+    const parts = trimmed.split(':=');
+    if (parts.length < 2) continue;
+
+    const output = parts[0].trim().replace(/;$/, '').trim();
+    const rhs = parts.slice(1).join(':=').trim().replace(/;$/, '').trim();
+
+    if (!output || !rhs || output.length < 2) continue;
+
+    // Skip IF/THEN/FOR constructs that got merged into one line
+    if (output.includes('IF') || output.includes('FOR') || output.includes('THEN')) continue;
+
+    // Find which signals are referenced in the right-hand side
+    const inputs = allRefs.filter(ref => rhs.includes(ref) && ref !== output);
+
+    if (inputs.length > 0 || rhs.length > 2) {
+      assignments.push({
+        output: output,
+        inputs: inputs,
+        expression: rhs.substring(0, 200),
+        fullLine: trimmed.substring(0, 300)
+      });
+    }
+  }
+
+  return assignments;
+}
+
+/**
+ * Extract logic from LAD/FBD network structure (non-SCL blocks).
+ */
+function extractLadFbdLogic(compileUnit, references) {
   const contacts = findAllDeep(compileUnit, 'Contact');
   const coils = findAllDeep(compileUnit, 'Coil');
 
   if (contacts.length > 0 && references.length > 0) {
-    // Simple heuristic: if multiple contacts, likely AND chain
-    // This is a best-effort extraction, not a full LAD compiler
     const parts = [];
     for (const contact of contacts) {
       const negated = contact['@_Negated'] === 'true';
@@ -326,12 +710,8 @@ function extractNetworkLogic(compileUnit, references) {
         parts.push(negated ? `NOT ${addr}` : addr);
       }
     }
-    if (parts.length > 0) {
-      return parts.join(' AND ');
-    }
+    if (parts.length > 0) return parts.join(' AND ');
   }
-
-  // Fallback: if we have references but no structured logic, return null
   return null;
 }
 
@@ -377,6 +757,7 @@ function parseStep7Project(filePath, plcType) {
       parseStep7SubblkDbt(subblkDbfData, dbtData, result);
       parseStep7NetworkComments(subblkDbfData, dbtData, result);
       parseStep7FbInterfaces(subblkDbfData, dbtData, result);
+      parseStep7MC7Logic(subblkDbfData, dbtData, result);
     }
   }
 
@@ -410,7 +791,7 @@ function parseStep7Project(filePath, plcType) {
         const parsed = xmlParser.parse(content);
         const meta = extractBlockMeta(parsed);
         extractTiaBlocks(parsed, result);
-        extractTiaNetworks(parsed, result, meta);
+        extractTiaNetworks(parsed, result, meta, content);
       } catch (e) { /* skip */ }
     }
   }
@@ -580,15 +961,18 @@ function parseStep7SubblkDbt(dbfBuffer, dbtBuffer, result) {
     if (dbfBuffer[recStart] === 0x2A) continue; // deleted
 
     const subblkTyp = parseInt(readField(dbfBuffer, recStart, fieldIndex.SUBBLKTYP) || '0');
-    // Type 6 = DB interface/body, Type 4 = DB instance (FB interface),
-    // Type 1 = SDB, Type 3 = OB, Type 7 = SFB, Type 9 = SFC, Type 10 = MC7 (some have text)
-    if (![1, 3, 4, 5, 6, 7, 9, 10].includes(subblkTyp)) continue;
+    // Type 6 = DB/UDT interface, Type 4 = FB instance DB interface, Type 5 = FB/FC AWL source
+    // Skip types 1(SDB), 3(OB), 7(SFB), 9(SFC), 10(MC7 code) – these produce system-internal vars
+    if (![4, 5, 6].includes(subblkTyp)) continue;
 
     const blkNumber = parseInt(readField(dbfBuffer, recStart, fieldIndex.BLKNUMBER) || '0');
     const mc5Ref = parseInt(readField(dbfBuffer, recStart, fieldIndex.MC5CODE) || '0');
     if (mc5Ref <= 0) continue;
 
-    // Read MC5CODE memo from DBT
+    // Read MC5CODE memo from DBT – DON'T use expectedLen here,
+    // as reading the full memo for DB interfaces pulls in thousands of
+    // FB-internal variables (timers, counters, temp vars). The first 504 bytes
+    // contain the user-relevant interface for most blocks.
     const memoContent = readDbtMemo(dbtBuffer, mc5Ref);
     if (!memoContent) continue;
 
@@ -755,6 +1139,78 @@ function parseStep7FbInterfaces(dbfBuffer, dbtBuffer, result) {
 }
 
 /**
+ * Decode MC7 bytecode from SUBBLK type 10 to extract actual PLC logic.
+ * This gives the AI mapper the complete program logic: which outputs depend on which inputs,
+ * through what conditions (AND/OR/comparisons), with CALL chains.
+ *
+ * Only decodes blocks that have real MC7 code (AWL/FBD/LAD compiled blocks).
+ * SCL-compiled blocks have empty MC7 (all zeros) and are skipped.
+ */
+function parseStep7MC7Logic(dbfBuffer, dbtBuffer, result) {
+  const { fieldIndex, dataStart, numRecords, recordSize } = parseDbfHeader(dbfBuffer);
+  if (!fieldIndex.SUBBLKTYP) return;
+
+  // Also need BLKLANG to detect SCL blocks (lang=5) vs AWL (lang=1/2)
+  for (let i = 0; i < numRecords; i++) {
+    const recStart = dataStart + (i * recordSize);
+    if (recStart + recordSize > dbfBuffer.length) break;
+    if (dbfBuffer[recStart] === 0x2A) continue;
+
+    const subblkTyp = parseInt(readField(dbfBuffer, recStart, fieldIndex.SUBBLKTYP) || '0');
+    // Type 14 = FB MC7, Type 12 = FC MC7, Type 8 = OB MC7, Type 13 = SFC, Type 15 = SFB
+    // Type 10 was wrong - it only has init data for SCL blocks
+    if (![8, 12, 13, 14, 15].includes(subblkTyp)) continue;
+
+    const blkNumber = parseInt(readField(dbfBuffer, recStart, fieldIndex.BLKNUMBER) || '0');
+    const mc5len = parseInt(readField(dbfBuffer, recStart, fieldIndex.MC5LEN) || '0');
+    const mc5Ref = parseInt(readField(dbfBuffer, recStart, fieldIndex.MC5CODE) || '0');
+    if (mc5Ref <= 0 || mc5len < 20) continue;
+
+    const data = readDbtMemo(dbtBuffer, mc5Ref, mc5len);
+    if (!data || data.length < mc5len) continue;
+
+    // Skip all-zeros blocks (SCL compiled – no MC7 to decode)
+    let allZero = true;
+    for (let j = 0; j < Math.min(data.length, mc5len); j++) {
+      if (data[j] !== 0) { allZero = false; break; }
+    }
+    if (allZero) continue;
+
+    try {
+      const decoded = decodeMC7(data, mc5len);
+      if (!decoded || decoded.length < 3) continue;
+
+      // Extract logic chains: which outputs depend on which inputs
+      const chains = extractLogicChains(decoded);
+      if (!chains || chains.length === 0) continue;
+
+      // Convert chains to network entries for the AI mapper
+      for (const chain of chains) {
+        if (!chain.output || !chain.inputs || chain.inputs.length === 0) continue;
+
+        // Build readable logic description
+        const logicStr = chain.logic ? chain.logic.map(l => l).join('; ') : null;
+        const inputAddrs = chain.inputs.map(inp => {
+          // Clean up addresses: "M 5.0" → "M5.0", "DBX 10.2" → "DBX10.2"
+          return inp.replace(/\s+/g, '');
+        });
+
+        const blockPrefix = subblkTyp === 12 ? 'FC' : subblkTyp === 8 ? 'OB' : 'FB';
+        result.networks.push({
+          block: `${blockPrefix}${blkNumber}`,
+          network_number: chain.startOffset || 0,
+          comment: `MC7 Logic: ${chain.output} depends on [${inputAddrs.join(', ')}]`,
+          signals_referenced: inputAddrs,
+          logic: logicStr ? logicStr.substring(0, 500) : null
+        });
+      }
+    } catch (e) {
+      // Skip blocks that fail to decode
+    }
+  }
+}
+
+/**
  * Parse dBASE header and return field index + metadata.
  * Reusable helper for all SUBBLK parsers.
  */
@@ -790,22 +1246,43 @@ function readField(buffer, recStart, fieldInfo) {
 
 /**
  * Read a memo field from a dBASE DBT file.
- * dBASE III memo: 512-byte blocks, chained.
- * First 4 bytes of first block: next block number (or 0xFFFF if last).
- * Data starts at offset 8 in first block.
+ *
+ * Step7 SUBBLK.DBT uses contiguous storage: data starts at blockNum * 512 + 8
+ * and extends for the full mc5len bytes across consecutive 512-byte blocks.
+ * The first 8 bytes of the starting block are a header (next-pointer + flags),
+ * but subsequent blocks are pure data (no per-block headers).
+ *
+ * For small memos (< 504 bytes): fits in single block (offset 8..511).
+ * For large memos: spans multiple consecutive blocks. After the first block's
+ * 8-byte header, all remaining data is contiguous.
  */
-function readDbtMemo(dbtBuffer, blockNum) {
+function readDbtMemo(dbtBuffer, blockNum, expectedLen) {
   const BLOCK_SIZE = 512;
+  const blockStart = blockNum * BLOCK_SIZE;
+
+  if (blockStart >= dbtBuffer.length) return null;
+
+  // First block: data starts at offset 8 (after 8-byte header)
+  const dataStart = blockStart + 8;
+
+  if (expectedLen && expectedLen > 0) {
+    // We know how much data to read – read it contiguously
+    const end = Math.min(dataStart + expectedLen, dbtBuffer.length);
+    if (end <= dataStart) return null;
+    return dbtBuffer.slice(dataStart, end);
+  }
+
+  // Fallback: no expected length – read using chain pointers (old behavior)
   const chunks = [];
   let currentBlock = blockNum;
   let safety = 0;
 
   while (currentBlock > 0 && safety < 1000) {
-    const blockStart = currentBlock * BLOCK_SIZE;
-    if (blockStart + BLOCK_SIZE > dbtBuffer.length) break;
+    const bs = currentBlock * BLOCK_SIZE;
+    if (bs + BLOCK_SIZE > dbtBuffer.length) break;
 
-    const nextBlock = dbtBuffer.readUInt16LE(blockStart);
-    const blockData = dbtBuffer.slice(blockStart + 8, blockStart + BLOCK_SIZE);
+    const nextBlock = dbtBuffer.readUInt16LE(bs);
+    const blockData = dbtBuffer.slice(bs + 8, bs + BLOCK_SIZE);
     chunks.push(blockData);
 
     if (nextBlock === 0 || nextBlock === 0xFFFF || nextBlock === currentBlock) break;
@@ -1385,6 +1862,39 @@ function findAllDeep(obj, key) {
   for (const k of Object.keys(obj)) {
     if (typeof obj[k] === 'object') {
       results.push(...findAllDeep(obj[k], key));
+    }
+  }
+  return results;
+}
+
+/**
+ * Find all elements with a given tag name in the ordered (preserveOrder) parse tree.
+ * In ordered mode each element is {TagName: [children], ':@': {attrs}}.
+ * Returns the full element objects (not just children) so callers have access to ':@'.
+ */
+function findAllDeepOrdered(node, tagName) {
+  const results = [];
+  if (!node || typeof node !== 'object') return results;
+
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      results.push(...findAllDeepOrdered(child, tagName));
+    }
+    return results;
+  }
+
+  for (const key of Object.keys(node)) {
+    if (key === ':@') continue;
+    if (key === tagName) {
+      // This element IS the one we want – push the whole node
+      results.push(node);
+    }
+    // Recurse into children
+    const children = node[key];
+    if (Array.isArray(children)) {
+      for (const child of children) {
+        results.push(...findAllDeepOrdered(child, tagName));
+      }
     }
   }
   return results;

@@ -43,7 +43,9 @@ router.get('/:id', async (req, res) => {
 
 // Add machine
 router.post('/', async (req, res) => {
-  const { name, plc_type, host, rack, slot, tia_version } = req.body;
+  const { name, plc_type, host, tia_version } = req.body;
+  const rack = parseInt(req.body.rack) || 0;
+  const slot = parseInt(req.body.slot) || 0;
 
   // Determine connector based on PLC type
   let connector;
@@ -141,7 +143,7 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
              ON CONFLICT (machine_id, address) DO UPDATE SET
                name = EXCLUDED.name, data_type = EXCLUDED.data_type,
                comment = EXCLUDED.comment, block_name = EXCLUDED.block_name`,
-            [req.params.id, 'DB', block.db_number, sanitize(block.name), sanitize(variable.name), sanitize(variable.address), sanitize(variable.type), sanitize(variable.comment)]
+            [req.params.id, 'DB', parseInt(block.db_number) || 0, sanitize(block.name), sanitize(variable.name), sanitize(variable.address), sanitize(variable.type), sanitize(variable.comment)]
           );
         }
       }
@@ -151,7 +153,7 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
         await client.query(
           `INSERT INTO network_comments (machine_id, block_name, network_number, comment, signals_referenced, logic)
            VALUES ($1, $2, $3, $4, $5, $6)`,
-          [req.params.id, sanitize(network.block), network.network_number, sanitize(network.comment), network.signals_referenced, sanitize(network.logic) || null]
+          [req.params.id, sanitize(network.block), parseInt(network.network_number) || 0, sanitize(network.comment), network.signals_referenced, sanitize(network.logic) || null]
         );
       }
 

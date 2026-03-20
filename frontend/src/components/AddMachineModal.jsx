@@ -13,11 +13,13 @@ const DEFAULT_SLOTS = {
 const FILE_HINTS = {
   'S7-300': { accept: '.s7p,.zip', label: '.s7p / .zip (Step7 Projekt)' },
   'S7-400': { accept: '.s7p,.zip', label: '.s7p / .zip (Step7 Projekt)' },
-  'Rockwell': { accept: '.l5x', label: '.L5X (Studio 5000 Export)' }
+  'S7-1200': { accept: '.zip,.xml', label: '.zip mit XML-Export aus TIA Portal' },
+  'S7-1500': { accept: '.zip,.xml', label: '.zip mit XML-Export aus TIA Portal' },
+  'Rockwell': { accept: '.l5x,.zip', label: '.L5X (Studio 5000 Export)' }
 };
 
-// These PLC types use live scan instead of file upload
-const LIVE_SCAN_TYPES = ['S7-1200', 'S7-1500', 'Rockwell'];
+// These PLC types can additionally scan live (file upload is always available)
+const CAN_LIVE_SCAN = ['S7-1200', 'S7-1500', 'Rockwell'];
 
 export default function AddMachineModal({ machine, onSubmit, onClose, onUpload }) {
   const isEdit = !!machine;
@@ -52,7 +54,7 @@ export default function AddMachineModal({ machine, onSubmit, onClose, onUpload }
 
     setUploading(true);
     try {
-      const result = await onSubmit(form);
+      const result = await onSubmit(form, !!file);
 
       // Upload project file if selected (S7-300/400)
       if (file && onUpload) {
@@ -71,8 +73,8 @@ export default function AddMachineModal({ machine, onSubmit, onClose, onUpload }
 
   const showRackSlot = form.plc_type !== 'Rockwell';
   const showOpcua = form.plc_type === 'S7-1200';
-  const showFileUpload = !LIVE_SCAN_TYPES.includes(form.plc_type);
-  const showLiveScanHint = LIVE_SCAN_TYPES.includes(form.plc_type);
+  const showFileUpload = !!FILE_HINTS[form.plc_type]; // All types can upload
+  const showLiveScanHint = CAN_LIVE_SCAN.includes(form.plc_type);
   const fileHint = FILE_HINTS[form.plc_type];
 
   return (
@@ -194,17 +196,16 @@ export default function AddMachineModal({ machine, onSubmit, onClose, onUpload }
           {/* Live scan hint for S7-1200/1500/Rockwell */}
           {showLiveScanHint && (
             <div className="bg-blue-900/30 border border-blue-700/40 rounded p-3 text-xs text-blue-300">
-              {form.plc_type === 'Rockwell' ? (
-                <span>Signale werden automatisch per EtherNet/IP von der SPS gelesen.</span>
-              ) : (
-                <span>
-                  Signale werden automatisch per {form.use_opcua ? 'OPC UA' : 'S7'} von der SPS gelesen.
-                  {form.plc_type === 'S7-1500' && ' OPC UA muss in der CPU aktiviert sein.'}
-                </span>
-              )}
-              <div className="mt-1 text-blue-400/70">
-                Nach dem Anlegen wird ein Live-Scan gestartet.
+              <div className="font-medium mb-1">Zwei Optionen:</div>
+              <div>1. <strong>XML-Upload</strong>: Bausteine in TIA Portal als XML exportieren, als .zip hochladen (empfohlen - mehr Kontext für AI)</div>
+              <div className="mt-1">2. <strong>Live-Scan</strong>: Ohne Datei anlegen - Signale werden per {form.plc_type === 'Rockwell' ? 'EtherNet/IP' : 'OPC UA'} gescannt
+                {form.plc_type === 'S7-1500' && ' (OPC UA muss in CPU aktiviert sein)'}
               </div>
+              {!file && (
+                <div className="mt-1 text-blue-400/70">
+                  Ohne Datei wird nach dem Anlegen ein Live-Scan gestartet.
+                </div>
+              )}
             </div>
           )}
 
@@ -216,6 +217,7 @@ export default function AddMachineModal({ machine, onSubmit, onClose, onUpload }
               className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2 rounded text-sm font-medium disabled:opacity-50"
             >
               {uploading ? 'Saving...' : isEdit ? 'Save Changes' :
+               file ? 'Add & Upload' :
                showLiveScanHint ? 'Add & Scan' : 'Add Machine'}
             </button>
             <button

@@ -11,6 +11,7 @@ export default function App() {
   const [showAddMachine, setShowAddMachine] = useState(false);
   const [editingMachine, setEditingMachine] = useState(null); // null = add mode, object = edit mode
   const [showDataModel, setShowDataModel] = useState(false);
+  const [dataModelVersion, setDataModelVersion] = useState(0);
 
   useEffect(() => { loadMachines(); }, []);
 
@@ -24,14 +25,15 @@ export default function App() {
     }
   }
 
-  async function handleAddMachine(formData) {
+  async function handleAddMachine(formData, hasFile) {
     const created = await api.post('/api/machines', formData);
     setMachines(prev => [created, ...prev]);
     setSelectedMachine(created);
 
-    // Auto-trigger live scan for S7-1200/1500/Rockwell
+    // Auto-trigger live scan ONLY if no file was uploaded
+    // (if file was uploaded, signals come from the parser instead)
     const liveScanTypes = ['S7-1200', 'S7-1500', 'Rockwell'];
-    if (liveScanTypes.includes(formData.plc_type)) {
+    if (!hasFile && liveScanTypes.includes(formData.plc_type)) {
       try {
         const result = await api.post(`/api/machines/${created.id}/scan-live`);
         alert(`Live-Scan: ${result.signals} signals found`);
@@ -102,7 +104,7 @@ export default function App() {
 
       <main className="flex-1 overflow-hidden">
         {selectedMachine ? (
-          <MappingView machine={selectedMachine} onRefresh={loadMachines} />
+          <MappingView machine={selectedMachine} onRefresh={loadMachines} dataModelVersion={dataModelVersion} />
         ) : (
           <div className="flex items-center justify-center h-full text-gray-500">
             <div className="text-center">
@@ -123,7 +125,7 @@ export default function App() {
         />
       )}
       {showDataModel && (
-        <DataModelEditor onClose={() => setShowDataModel(false)} />
+        <DataModelEditor onClose={() => setShowDataModel(false)} onSave={() => setDataModelVersion(v => v + 1)} />
       )}
     </div>
   );

@@ -1,6 +1,8 @@
 const http = require('http');
 const https = require('https');
 const pool = require('../db/pool');
+const { buildCrossReference } = require('./cross-reference');
+const { CTBASE_RULES } = require('./ctbase-rules');
 
 const AI_PROVIDER = process.env.AI_PROVIDER || 'ollama';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -9,385 +11,289 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:8b';
 
-/**
- * AI Mapping Service.
- *
- * For Claude (cloud): Send ALL signals + ALL targets in one call. Claude can handle it.
- * For Ollama (local): Batch into small groups with pre-filtering.
- */
+// ═══════════════════════════════════════════════════════════════
+// Main entry point
+// ═══════════════════════════════════════════════════════════════
+
 async function suggestMappingsBatchwise(machineId, onProgress) {
-  const { rows: signals } = await pool.query(
-    'SELECT * FROM signals WHERE machine_id = $1 ORDER BY address', [machineId]
-  );
-  const { rows: networks } = await pool.query(
-    'SELECT * FROM network_comments WHERE machine_id = $1 ORDER BY block_name, network_number', [machineId]
-  );
+  onProgress({ status: 'running', progress: 0, total: 1, mapped: 0, currentGroup: 'Building cross-reference...' });
+
+  const { signalProfiles, stats } = await buildCrossReference(machineId);
+  console.log(`Cross-ref: ${stats.totalSignals} signals, ${stats.withWriters} writers, ${stats.withDependencies} deps`);
+
+  const signalContext = buildCompactContext(signalProfiles);
+  console.log(`Context: ${signalContext.length} chars ≈ ${Math.round(signalContext.length / 4)} tokens`);
+
   const { rows: models } = await pool.query('SELECT * FROM datamodel ORDER BY created_at DESC LIMIT 1');
   if (!models.length) throw new Error('No data model defined');
-
   const { rows: targetSignals } = await pool.query(
     'SELECT * FROM datamodel_signals WHERE datamodel_id = $1 ORDER BY sort_order', [models[0].id]
   );
 
-  if (AI_PROVIDER === 'openai' && OPENAI_API_KEY) {
-    return suggestWithOpenAI(machineId, signals, networks, targetSignals, onProgress);
+  // Split: Phase 1 = BOOL/INT/REAL, Phase 2 = STRING (lookups)
+  const phase1Targets = targetSignals.filter(t => !['STRING', 'CHAR'].includes((t.data_type || '').toUpperCase()));
+  const phase2Targets = targetSignals.filter(t => ['STRING', 'CHAR'].includes((t.data_type || '').toUpperCase()));
+  console.log(`Phase 1: ${phase1Targets.length} | Phase 2: ${phase2Targets.length} STRING lookups`);
+
+  const provider = (AI_PROVIDER === 'openai' && OPENAI_API_KEY) ? 'openai'
+    : (AI_PROVIDER === 'anthropic' && ANTHROPIC_API_KEY) ? 'anthropic' : 'ollama';
+
+  // Phase 1
+  const p1Count = await runPhase1(provider, machineId, signalContext, phase1Targets, onProgress);
+
+  // Phase 2
+  if (phase2Targets.length > 0) {
+    const { rows: p1Results } = await pool.query(
+      'SELECT target_signal, source_address, expression FROM mappings WHERE machine_id = $1', [machineId]
+    );
+    await runPhase2(provider, machineId, signalContext, phase2Targets, p1Results, p1Count, onProgress);
   }
-  if (AI_PROVIDER === 'anthropic' && ANTHROPIC_API_KEY) {
-    return suggestWithClaude(machineId, signals, networks, targetSignals, onProgress);
-  }
-  return suggestWithOllama(machineId, signals, networks, targetSignals, onProgress);
+
+  const { rows: [{ c }] } = await pool.query('SELECT COUNT(*) as c FROM mappings WHERE machine_id = $1', [machineId]);
+  onProgress({ status: 'done', progress: 100, total: 100, mapped: parseInt(c), currentGroup: '' });
+  console.log(`Done: ${c}/${targetSignals.length} mapped.`);
 }
 
-// ═════════════════════════════════════════════════════════════
-// OpenAI (GPT-5.4) – ALL signals, ALL networks, ALL targets, ONE call
-// ═════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// Phase 1: BOOL / INT / REAL
+// ═══════════════════════════════════════════════════════════════
 
-async function suggestWithOpenAI(machineId, signals, networks, targetSignals, onProgress) {
-  // Build full context once – shared across all batches
-  const signalList = signals.map(s =>
-    `${s.address} [${s.data_type}] ${s.name || ''} ${s.comment ? '// ' + s.comment : ''}`
-  ).join('\n');
-
-  const networkList = networks.map(n => {
-    let entry = `${n.block_name} NW${n.network_number}: ${n.comment || ''}`;
-    if (n.signals_referenced?.length) entry += ` [refs: ${n.signals_referenced.slice(0, 5).join(', ')}]`;
-    if (n.logic) entry += ` Logic: ${n.logic}`;
-    return entry;
-  }).join('\n');
-
-  // 5 targets per call – model sees ALL signals but focuses on 5 targets
-  const BATCH_SIZE = 5;
+async function runPhase1(provider, machineId, signalContext, targets, onProgress) {
+  const BATCH = provider === 'ollama' ? 5 : 20;
   const batches = [];
-  for (let i = 0; i < targetSignals.length; i += BATCH_SIZE) {
-    batches.push(targetSignals.slice(i, i + BATCH_SIZE));
-  }
+  for (let i = 0; i < targets.length; i += BATCH) batches.push(targets.slice(i, i + BATCH));
 
-  let totalMapped = 0;
-  onProgress({ status: 'running', progress: 0, total: batches.length, mapped: 0, currentGroup: 'Starting...' });
-
+  let mapped = 0;
   for (let bi = 0; bi < batches.length; bi++) {
     const batch = batches[bi];
-    const group = batch.map(t => t.name.split('.').pop()).join(', ');
+    const group = 'Phase 1: ' + batch.map(t => t.name.split('.').pop()).join(', ');
+    onProgress({ status: 'running', progress: bi, total: batches.length + 1, mapped, currentGroup: group });
 
-    onProgress({ status: 'running', progress: bi, total: batches.length, mapped: totalMapped, currentGroup: group });
+    const list = batch.map(t => `"${t.name}" [${t.data_type}${t.unit ? ', ' + t.unit : ''}]: ${t.description || ''}`).join('\n');
 
-    const targetList = batch.map(t =>
-      `"${t.name}" [${t.data_type}${t.unit ? ', ' + t.unit : ''}]: ${t.description || ''}`
-    ).join('\n');
+    const prompt = `Du bist ein erfahrener SPS-Ingenieur. Finde für jedes Ziel-Signal das passende PLC-Signal.
 
-    const prompt = `Du bist ein erfahrener SPS-Ingenieur. Analysiere dieses SPS-Programm und finde für JEDES der folgenden ${batch.length} Ziel-Signale das passende PLC-Signal.
+ZIEL-SIGNALE (${batch.length}):
+${list}
 
-ZIEL-SIGNALE (finde für jedes das passende PLC-Signal):
-${targetList}
+CTBASE MAPPING-REGELN:
+${CTBASE_RULES}
 
-ALLE PLC-SIGNALE (${signals.length} – durchsuche ALLE):
-${signalList}
-
-ALLE NETZWERK-KOMMENTARE (${networks.length} – FBs, FCs, OBs):
-${networkList}
+ANALYSIERTES SPS-PROGRAMM:
+${signalContext}
 
 REGELN:
-- Zuordnung muss SEMANTISCH passen (Name/Kommentar → Bedeutung des Ziels)
-- SPS implementiert möglicherweise CTBase – suche nach HeartbeatUp, CycleIsRunning, Producing, RecipeID, JobName, TraceId etc.
-- "direct" = 1:1, "expression" = kombiniert (AND/OR)
-- Wenn NICHTS passt → WEGLASSEN. NICHT raten!
-- Datentypen müssen passen (BOOL→BOOL, INT→INT/WORD, REAL→REAL)
-- Verwende PLC-Adressen als source (z.B. DB2.DBX0.0, I1000.7)
+1. DATENTYPEN MÜSSEN PASSEN: BOOL→BOOL/expression, INT→INT/WORD, REAL→REAL
+2. Nutze Abhängigkeiten (← [...]) um zu verstehen was ein Signal WIRKLICH tut
+3. Bei mehreren gleichartigen Signalen (z.B. Schutztüren): OR-Verknüpfung als "expression"
+4. Wenn NICHTS passt → WEGLASSEN. Nicht raten!
+5. Verwende exakte PLC-Adressen (z.B. DB15.DBX0.3, DB49.DBX143.0)
 
-NUR JSON Array, kein anderer Text:
-[{"target": "Zielname", "source": "PLC-Adresse", "type": "direct", "confidence": 0.9, "reason": "warum"}]
-oder [] wenn nichts passt.`;
+JSON Array:
+[{"target":"Name","source":"Adresse","type":"direct","confidence":0.9,"reason":"Begründung"}]
+oder [{"target":"Name","expression":"DB15.DBX0.3 OR DB15.DBX10.3","type":"expression","confidence":0.9,"reason":"..."}]
+oder []`;
 
     try {
-      console.log(`OpenAI batch ${bi + 1}/${batches.length}: ${group}`);
-      const response = await callOpenAI(prompt);
-      const suggestions = parseResponse(response, machineId, batch);
-
-      for (const m of suggestions) {
+      console.log(`P1 ${bi + 1}/${batches.length}`);
+      const resp = await callProvider(provider, prompt);
+      const sug = parseResponse(resp, machineId, batch);
+      for (const m of sug) {
         await pool.query(
-          `INSERT INTO mappings (machine_id, target_signal, mapping_type, source_address, expression, confidence, validated_by_human, reasoning)
-           VALUES ($1, $2, $3, $4, $5, $6, false, $7)
-           ON CONFLICT (machine_id, target_signal) DO UPDATE SET
-             mapping_type = EXCLUDED.mapping_type, source_address = EXCLUDED.source_address,
-             expression = EXCLUDED.expression, confidence = EXCLUDED.confidence, reasoning = EXCLUDED.reasoning`,
+          `INSERT INTO mappings (machine_id,target_signal,mapping_type,source_address,expression,confidence,validated_by_human,reasoning)
+           VALUES ($1,$2,$3,$4,$5,$6,false,$7)
+           ON CONFLICT (machine_id,target_signal) DO UPDATE SET
+             mapping_type=EXCLUDED.mapping_type,source_address=EXCLUDED.source_address,
+             expression=EXCLUDED.expression,confidence=EXCLUDED.confidence,reasoning=EXCLUDED.reasoning`,
           [machineId, m.target_signal, m.mapping_type, m.source_address, m.expression, m.confidence, m.reasoning]
         );
-        totalMapped++;
+        mapped++;
       }
-      console.log(`  → ${suggestions.length} mapped`);
+      console.log(`  → ${sug.length} mapped`);
     } catch (err) {
-      console.error(`  Batch ${bi + 1} failed: ${err.message}`);
-    }
-
-    // Rate limit: wait 35s between calls (78K tokens/call, 200K limit/min)
-    if (bi < batches.length - 1) {
-      const waitSec = 35;
-      console.log(`  Waiting ${waitSec}s for rate limit...`);
-      onProgress({ status: 'running', progress: bi + 1, total: batches.length, mapped: totalMapped, currentGroup: `Warte ${waitSec}s (Rate-Limit)...` });
-      await new Promise(r => setTimeout(r, waitSec * 1000));
+      console.error(`  P1 batch ${bi + 1} failed: ${err.message}`);
     }
   }
+  return mapped;
+}
 
-  onProgress({ status: 'done', progress: batches.length, total: batches.length, mapped: totalMapped, currentGroup: '' });
-  console.log(`OpenAI: Done. ${totalMapped}/${targetSignals.length} targets mapped in ${batches.length} calls.`);
+// ═══════════════════════════════════════════════════════════════
+// Phase 2: STRING lookups with real addresses from Phase 1
+// ═══════════════════════════════════════════════════════════════
+
+async function runPhase2(provider, machineId, signalContext, stringTargets, phase1Results, p1Count, onProgress) {
+  onProgress({ status: 'running', progress: 95, total: 100, mapped: p1Count, currentGroup: 'Phase 2: STRING lookups...' });
+
+  const p1Summary = phase1Results.map(m => `${m.target_signal} = ${m.source_address || m.expression || '?'}`).join('\n');
+  const list = stringTargets.map(t => `"${t.name}" [STRING]: ${t.description || ''}`).join('\n');
+
+  const prompt = `Du bist ein SPS-Ingenieur. Erstelle LOOKUP-Tabellen für STRING-Ziel-Signale.
+
+BEREITS GEMAPPTE SIGNALE (Phase 1 – verwende diese PLC-Adressen in den Bedingungen!):
+${p1Summary}
+
+STRING ZIEL-SIGNALE:
+${list}
+
+CTBASE REGELN:
+${CTBASE_RULES}
+
+PLC-SIGNALE:
+${signalContext}
+
+LOOKUP FORMAT:
+Jeder Key in lookup_table ist eine EXPRESSION mit ECHTEN PLC-Adressen die TRUE/FALSE ergibt.
+Der Value ist der STRING der dann gesetzt wird.
+Bedingungen werden in Reihenfolge ausgewertet – erste TRUE gewinnt.
+"DEFAULT" = Fallback wenn nichts passt.
+
+BEISPIEL:
+[{
+  "target": "Machine.MachineryItemState",
+  "type": "lookup",
+  "lookup_table": {
+    "DB15.DBX0.3 OR DB15.DBX10.3": "Out of Service",
+    "DB15.DBX0.2 AND DB49.DBX49.0 AND NOT DB15.DBX0.3": "Executing",
+    "DB15.DBX0.0 AND NOT DB49.DBX49.0": "Not Executing",
+    "DEFAULT": "Not available"
+  },
+  "confidence": 0.85,
+  "reason": "Priorität: Fehler→OutOfService, AutoProduziert→Executing, Ein→NotExecuting, sonst→NotAvailable"
+}]
+
+REGELN:
+1. NUR echte PLC-Adressen in Bedingungen (DB15.DBX0.3 etc.), NICHT "ErrorActive" oder "calculated"
+2. Verwende die Phase-1-Adressen: z.B. wenn ErrorActive = DB15.DBX0.3, dann schreibe DB15.DBX0.3
+3. "DEFAULT" als letzten Key für den Fallback-Wert
+4. Wenn kein sinnvoller Lookup möglich → WEGLASSEN
+5. Nur STRING-Ziele die einen berechneten Wert brauchen (MachineryItemState, OperationMode, ErrorDescription etc.)
+6. Statische Felder wie Manufacturer/SerialNumber → WEGLASSEN (werden nicht berechnet)
+
+JSON Array oder []:`;
+
+  try {
+    console.log(`P2: ${stringTargets.length} STRING lookups`);
+    const resp = await callProvider(provider, prompt);
+    const sug = parseLookupResponse(resp, machineId, stringTargets);
+    for (const m of sug) {
+      await pool.query(
+        `INSERT INTO mappings (machine_id,target_signal,mapping_type,source_address,expression,lookup_table,confidence,validated_by_human,reasoning)
+         VALUES ($1,$2,'lookup',null,null,$3,$4,false,$5)
+         ON CONFLICT (machine_id,target_signal) DO UPDATE SET
+           mapping_type='lookup',source_address=null,expression=null,
+           lookup_table=EXCLUDED.lookup_table,confidence=EXCLUDED.confidence,reasoning=EXCLUDED.reasoning`,
+        [machineId, m.target_signal, JSON.stringify(m.lookup_table), m.confidence, m.reasoning]
+      );
+    }
+    console.log(`  → ${sug.length} lookups`);
+  } catch (err) {
+    console.error(`  P2 failed: ${err.message}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Context builder
+// ═══════════════════════════════════════════════════════════════
+
+function buildCompactContext(profiles) {
+  const inNets = profiles.filter(p => p.writtenBy.length > 0 || p.readBy.length > 0);
+  const withComments = profiles.filter(p =>
+    p.writtenBy.length === 0 && p.readBy.length === 0 && p.comment && !p.comment.startsWith('[name:')
+  );
+
+  let text = '';
+  if (inNets.length > 0) {
+    text += `--- SIGNALS WITH TRACED LOGIC (${inNets.length}) ---\n`;
+    for (const p of inNets) {
+      text += `${p.address} [${p.data_type || '?'}]`;
+      if (p.name) text += ` "${p.name}"`;
+      if (p.comment && !p.comment.startsWith('[name:')) text += ` // ${p.comment}`;
+      if (p.dependsOn.length > 0) {
+        const deps = p.dependsOn.slice(0, 8).map(d => {
+          let s = d.address;
+          if (d.comment && !d.comment.startsWith('[name:') && !d.comment.startsWith('Written in')) {
+            s += '(' + d.comment.substring(0, 40) + ')';
+          }
+          return s;
+        });
+        text += ` ← [${deps.join(', ')}]`;
+      } else if (p.writtenBy.length > 0) {
+        text += ` ← written by ${p.writtenBy[0].block}`;
+      }
+      text += '\n';
+    }
+    text += '\n';
+  }
+  if (withComments.length > 0) {
+    text += `--- SIGNALS WITH COMMENTS (${withComments.length}) ---\n`;
+    for (const p of withComments) {
+      text += `${p.address} [${p.data_type || '?'}]`;
+      if (p.name) text += ` "${p.name}"`;
+      if (p.comment) text += ` // ${p.comment}`;
+      text += '\n';
+    }
+  }
+  return text;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Provider calls
+// ═══════════════════════════════════════════════════════════════
+
+async function callProvider(provider, prompt) {
+  if (provider === 'openai') return callOpenAI(prompt);
+  if (provider === 'anthropic') return callClaude(prompt);
+  return callOllama(prompt);
 }
 
 async function callOpenAI(prompt) {
   const payload = JSON.stringify({
-    model: OPENAI_MODEL,
-    max_completion_tokens: 16384,
-    temperature: 0.05,
+    model: OPENAI_MODEL, max_completion_tokens: 16384, temperature: 0.05,
     messages: [{ role: 'user', content: prompt }]
   });
-
   return new Promise((resolve, reject) => {
     const req = https.request({
-      hostname: 'api.openai.com',
-      path: '/v1/chat/completions',
-      method: 'POST',
-      timeout: 180000,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`
-      }
+      hostname: 'api.openai.com', path: '/v1/chat/completions', method: 'POST', timeout: 300000,
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` }
     }, (res) => {
       let data = '';
-      res.on('data', chunk => data += chunk);
+      res.on('data', c => data += c);
       res.on('end', () => {
         try {
-          const parsed = JSON.parse(data);
-          if (parsed.error) reject(new Error(parsed.error.message));
-          else resolve(parsed.choices[0].message.content);
-        } catch (e) { reject(new Error(`OpenAI parse error: ${data.slice(0, 500)}`)); }
+          const p = JSON.parse(data);
+          if (p.error) reject(new Error(p.error.message));
+          else resolve(p.choices[0].message.content);
+        } catch (e) { reject(new Error('OpenAI parse: ' + data.slice(0, 300))); }
       });
     });
-    req.on('timeout', () => { req.destroy(); reject(new Error('OpenAI timeout 180s')); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('OpenAI timeout')); });
     req.on('error', reject);
     req.write(payload);
     req.end();
   });
 }
 
-// ═════════════════════════════════════════════════════════════
-// Claude (Cloud) – ALL signals, ALL targets, one call
-// ═════════════════════════════════════════════════════════════
-
-async function suggestWithClaude(machineId, signals, networks, targetSignals, onProgress) {
-  // Only signals with comments – keep it compact
-  const usefulSignals = signals.filter(s => s.comment && s.comment.length > 3);
-
-  // Compact signal list – shorter format to stay under 30K tokens
-  const signalList = usefulSignals.map(s =>
-    `${s.address} [${s.data_type}] ${s.name || ''} // ${s.comment}`
-  ).join('\n');
-
-  // Compact networks
-  const networkList = networks.slice(0, 100).map(n =>
-    `${n.block_name} NW${n.network_number}: ${n.comment || ''}`
-  ).join('\n');
-
-  // Split targets into batches of 20 – each batch stays under 30K input tokens
-  const BATCH_SIZE = 20;
-  const batches = [];
-  for (let i = 0; i < targetSignals.length; i += BATCH_SIZE) {
-    batches.push(targetSignals.slice(i, i + BATCH_SIZE));
-  }
-
-  let totalMapped = 0;
-  onProgress({ status: 'running', progress: 0, total: batches.length, mapped: 0, currentGroup: 'Starting...' });
-
-  for (let bi = 0; bi < batches.length; bi++) {
-    const batch = batches[bi];
-    const group = batch[0].name.split('.')[0];
-    onProgress({ status: 'running', progress: bi, total: batches.length, mapped: totalMapped, currentGroup: group });
-
-    // Rate limit: wait 65 seconds between calls (30K tokens/min limit)
-    if (bi > 0) {
-      console.log(`  Rate limit pause: waiting 65s before batch ${bi + 1}/${batches.length}...`);
-      onProgress({ status: 'running', progress: bi, total: batches.length, mapped: totalMapped, currentGroup: `${group} (warte auf Rate-Limit...)` });
-      await new Promise(r => setTimeout(r, 65000));
-    }
-
-    const targetList = batch.map(t =>
-      `"${t.name}" [${t.data_type}${t.unit ? ', ' + t.unit : ''}]: ${t.description || ''}`
-    ).join('\n');
-
-    const prompt = `Du bist ein SPS-Ingenieur. Ordne PLC-Signale dem CTBase Standard-Datenmodell zu.
-
-ZIEL-SIGNALE (finde für JEDES das passende PLC-Signal):
-${targetList}
-
-PLC-SIGNALE (${usefulSignals.length} mit Kommentaren):
-${signalList}
-
-NETZWERKE:
-${networkList}
-
-REGELN:
-- Zuordnung muss SEMANTISCH passen (Name/Kommentar → Bedeutung)
-- SPS implementiert möglicherweise CTBase – suche nach HeartbeatUp, CycleIsRunning, Producing, RecipeID, JobName, TraceId etc.
-- "direct" = 1:1, "expression" = kombiniert (AND/OR)
-- Wenn NICHTS passt → WEGLASSEN. NICHT raten!
-- Datentypen müssen passen
-
-NUR JSON Array:
-[{"target": "Zielname", "source": "DB-Adresse", "type": "direct", "confidence": 0.9, "reason": "warum"}]`;
-
-    try {
-      console.log(`Claude batch ${bi + 1}/${batches.length}: ${group} (${batch.length} targets)`);
-      const response = await callClaude(prompt);
-      const suggestions = parseResponse(response, machineId, batch);
-
-      for (const m of suggestions) {
-        await pool.query(
-          `INSERT INTO mappings (machine_id, target_signal, mapping_type, source_address, expression, confidence, validated_by_human, reasoning)
-           VALUES ($1, $2, $3, $4, $5, $6, false, $7)
-           ON CONFLICT (machine_id, target_signal) DO UPDATE SET
-             mapping_type = EXCLUDED.mapping_type, source_address = EXCLUDED.source_address,
-             expression = EXCLUDED.expression, confidence = EXCLUDED.confidence, reasoning = EXCLUDED.reasoning`,
-          [machineId, m.target_signal, m.mapping_type, m.source_address, m.expression, m.confidence, m.reasoning]
-        );
-        totalMapped++;
-      }
-      console.log(`  → ${suggestions.length} mapped`);
-    } catch (err) {
-      console.error(`  Batch ${bi + 1} failed: ${err.message}`);
-    }
-  }
-
-  onProgress({ status: 'done', progress: batches.length, total: batches.length, mapped: totalMapped, currentGroup: '' });
-  console.log(`Claude: Done. ${totalMapped}/${targetSignals.length} targets mapped.`);
-}
-
-// ═════════════════════════════════════════════════════════════
-// Ollama (Local) – batched with pre-filtering
-// ═════════════════════════════════════════════════════════════
-
-async function suggestWithOllama(machineId, signals, networks, targetSignals, onProgress) {
-  const BATCH_SIZE = 5;
-  const batches = [];
-  for (let i = 0; i < targetSignals.length; i += BATCH_SIZE) {
-    batches.push(targetSignals.slice(i, i + BATCH_SIZE));
-  }
-
-  let mapped = 0;
-  onProgress({ status: 'running', progress: 0, total: batches.length, mapped: 0, currentGroup: '' });
-
-  for (let bi = 0; bi < batches.length; bi++) {
-    const batch = batches[bi];
-    const group = batch[0].name.split('.')[0];
-    onProgress({ status: 'running', progress: bi, total: batches.length, mapped, currentGroup: group });
-
-    const candidates = selectCandidates(batch, signals);
-    if (candidates.length === 0) continue;
-
-    const prompt = buildOllamaPrompt(batch, candidates);
-
-    try {
-      console.log(`Ollama: ${group} (${batch.length} targets, ${candidates.length} candidates)`);
-      const response = await callOllama(prompt);
-      const suggestions = parseResponse(response, machineId, batch);
-
-      for (const m of suggestions) {
-        await pool.query(
-          `INSERT INTO mappings (machine_id, target_signal, mapping_type, source_address, expression, confidence, validated_by_human, reasoning)
-           VALUES ($1, $2, $3, $4, $5, $6, false, $7)
-           ON CONFLICT (machine_id, target_signal) DO UPDATE SET
-             mapping_type = EXCLUDED.mapping_type, source_address = EXCLUDED.source_address,
-             expression = EXCLUDED.expression, confidence = EXCLUDED.confidence, reasoning = EXCLUDED.reasoning`,
-          [machineId, m.target_signal, m.mapping_type, m.source_address, m.expression, m.confidence, m.reasoning]
-        );
-        mapped++;
-      }
-    } catch (err) {
-      console.error(`Ollama batch failed:`, err.message);
-    }
-  }
-
-  onProgress({ status: 'done', progress: batches.length, total: batches.length, mapped, currentGroup: '' });
-}
-
-function selectCandidates(targets, allSignals) {
-  const keywords = new Set();
-  const targetTypes = new Set();
-  for (const t of targets) {
-    targetTypes.add(t.data_type?.toUpperCase() || 'BOOL');
-    `${t.name} ${t.description || ''}`.replace(/\./g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2')
-      .toLowerCase().split(/\s+/).forEach(w => { if (w.length > 2) keywords.add(w); });
-  }
-
-  const scored = allSignals
-    .filter(s => s.comment || s.name)
-    .map(s => {
-      const text = `${s.name || ''} ${s.comment || ''}`.toLowerCase();
-      let score = 0;
-      for (const kw of keywords) { if (text.includes(kw)) score += 3; }
-      if (s.comment && s.comment.length > 5) score += 2;
-      return { signal: s, score };
-    })
-    .filter(s => s.score > 0);
-
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 25).map(s => s.signal);
-}
-
-function buildOllamaPrompt(targets, candidates) {
-  const candidateList = candidates.map(s =>
-    `${s.address} [${s.data_type}] "${s.name || ''}" ${s.comment ? '// ' + s.comment : ''}`
-  ).join('\n');
-
-  const targetList = targets.map(t =>
-    `"${t.name}" [${t.data_type}${t.unit ? ', ' + t.unit : ''}]: ${t.description || ''}`
-  ).join('\n');
-
-  return `Du bist ein SPS-Ingenieur. Ordne PLC-Signale dem Standard-Datenmodell zu.
-NUR zuordnen wenn Kommentar/Name WIRKLICH passt. Wenn nichts passt → WEGLASSEN.
-
-ZIEL-SIGNALE:
-${targetList}
-
-PLC-KANDIDATEN:
-${candidateList}
-
-JSON Array (NUR passende):
-[{"target": "Zielname", "source": "Adresse", "type": "direct", "reason": "warum"}]`;
-}
-
-// ═════════════════════════════════════════════════════════════
-// LLM API calls
-// ═════════════════════════════════════════════════════════════
-
 async function callClaude(prompt) {
   const payload = JSON.stringify({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 16384,
-    temperature: 0.05,
+    model: 'claude-sonnet-4-20250514', max_tokens: 16384, temperature: 0.05,
     messages: [{ role: 'user', content: prompt }]
   });
-
   return new Promise((resolve, reject) => {
     const req = https.request({
-      hostname: 'api.anthropic.com',
-      path: '/v1/messages',
-      method: 'POST',
-      timeout: 120000,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
-      }
+      hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST', timeout: 300000,
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' }
     }, (res) => {
       let data = '';
-      res.on('data', chunk => data += chunk);
+      res.on('data', c => data += c);
       res.on('end', () => {
         try {
-          const parsed = JSON.parse(data);
-          if (parsed.error) reject(new Error(parsed.error.message));
-          else resolve(parsed.content[0].text);
-        } catch (e) { reject(new Error(`Claude parse error: ${data.slice(0, 500)}`)); }
+          const p = JSON.parse(data);
+          if (p.error) reject(new Error(p.error.message));
+          else resolve(p.content[0].text);
+        } catch (e) { reject(new Error('Claude parse: ' + data.slice(0, 300))); }
       });
     });
-    req.on('timeout', () => { req.destroy(); reject(new Error('Claude timeout 120s')); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('Claude timeout')); });
     req.on('error', reject);
     req.write(payload);
     req.end();
@@ -398,98 +304,91 @@ async function callOllama(prompt) {
   const url = new URL('/api/generate', OLLAMA_URL);
   const payload = JSON.stringify({
     model: OLLAMA_MODEL, prompt, stream: false,
-    options: { temperature: 0.05, top_p: 0.8, num_predict: 1024, num_ctx: 4096 }
+    options: { temperature: 0.05, top_p: 0.8, num_predict: 4096, num_ctx: 8192 }
   });
-
   return new Promise((resolve, reject) => {
     const req = http.request({
       hostname: url.hostname, port: url.port, path: url.pathname,
-      method: 'POST', timeout: 180000,
+      method: 'POST', timeout: 300000,
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
     }, (res) => {
       let data = '';
-      res.on('data', chunk => data += chunk);
+      res.on('data', c => data += c);
       res.on('end', () => {
         try {
-          const parsed = JSON.parse(data);
-          if (parsed.error) reject(new Error(parsed.error));
-          else resolve(parsed.response);
-        } catch (e) { reject(new Error(`Ollama parse error: ${data.slice(0, 300)}`)); }
+          const p = JSON.parse(data);
+          if (p.error) reject(new Error(p.error));
+          else resolve(p.response);
+        } catch (e) { reject(new Error('Ollama parse: ' + data.slice(0, 300))); }
       });
     });
-    req.on('timeout', () => { req.destroy(); reject(new Error('Ollama timeout 180s')); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('Ollama timeout')); });
     req.on('error', reject);
     req.write(payload);
     req.end();
   });
 }
 
-// ═════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
 // Response parsing
-// ═════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
 
 function parseResponse(response, machineId, validTargets) {
   let jsonStr = response.trim();
   if (jsonStr.includes('```')) {
-    const match = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (match) jsonStr = match[1].trim();
+    const m = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (m) jsonStr = m[1].trim();
   }
-  const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
-  if (!arrayMatch) {
-    console.warn('No JSON array in response:', response.slice(0, 200));
-    return [];
-  }
+  const arrMatch = jsonStr.match(/\[[\s\S]*\]/);
+  if (!arrMatch) { console.warn('No JSON array:', response.slice(0, 200)); return []; }
 
-  const validTargetNames = new Set(validTargets.map(t => t.name));
-
+  const validNames = new Set(validTargets.map(t => t.name));
   try {
-    const arr = JSON.parse(arrayMatch[0]);
-    return arr
-      .filter(s => {
-        if (!validTargetNames.has(s.target)) return false;
-        if (!s.source && !s.expression) return false;
-        return true;
-      })
+    return JSON.parse(arrMatch[0])
+      .filter(s => validNames.has(s.target) && (s.source || s.expression))
       .map(s => {
         let addr = s.source || s.source_address || null;
         let expr = s.expression || null;
-        let mtype = s.type || s.mapping_type || 'direct';
+        let mtype = s.type || 'direct';
 
-        // Fix pipe separator → OR
-        if (addr && addr.includes('|')) {
-          expr = addr.replace(/\s*\|\s*/g, ' OR ');
-          addr = null;
-          mtype = 'expression';
-        }
+        if (addr && addr.includes('|')) { expr = addr.replace(/\s*\|\s*/g, ' OR '); addr = null; mtype = 'expression'; }
         if (expr) expr = expr.replace(/\s*\|\s*/g, ' OR ');
 
-        // Direct must be single address
         if (mtype === 'direct' && addr) {
           const matches = addr.match(/DB\d+\.DB[XBWD]\d+(?:\.\d+)?|[IQM]\d+(?:\.\d+)?/g);
-          if (matches && matches.length > 1) {
-            expr = matches.join(' OR ');
-            addr = null;
-            mtype = 'expression';
-          } else if (matches && matches.length === 1) {
-            addr = matches[0];
-          }
+          if (matches && matches.length > 1) { expr = matches.join(' OR '); addr = null; mtype = 'expression'; }
+          else if (matches && matches.length === 1) addr = matches[0];
         }
 
         return {
-          machine_id: machineId,
-          target_signal: s.target,
-          mapping_type: mtype,
-          source_address: addr,
-          expression: expr,
-          confidence: s.confidence || 0.7,
-          reasoning: s.reason || s.reasoning || null,
+          machine_id: machineId, target_signal: s.target, mapping_type: mtype,
+          source_address: addr, expression: expr,
+          confidence: s.confidence || 0.7, reasoning: s.reason || s.reasoning || null,
           validated_by_human: false
         };
       });
-  } catch (e) {
-    console.warn('JSON parse failed:', e.message);
-    return [];
+  } catch (e) { console.warn('JSON parse failed:', e.message); return []; }
+}
+
+function parseLookupResponse(response, machineId, validTargets) {
+  let jsonStr = response.trim();
+  if (jsonStr.includes('```')) {
+    const m = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (m) jsonStr = m[1].trim();
   }
+  const arrMatch = jsonStr.match(/\[[\s\S]*\]/);
+  if (!arrMatch) { console.warn('No JSON in lookup response:', response.slice(0, 200)); return []; }
+
+  const validNames = new Set(validTargets.map(t => t.name));
+  try {
+    return JSON.parse(arrMatch[0])
+      .filter(s => validNames.has(s.target) && s.lookup_table && typeof s.lookup_table === 'object')
+      .map(s => ({
+        machine_id: machineId, target_signal: s.target,
+        lookup_table: s.lookup_table,
+        confidence: s.confidence || 0.7, reasoning: s.reason || s.reasoning || null,
+      }));
+  } catch (e) { console.warn('Lookup parse failed:', e.message); return []; }
 }
 
 module.exports = { suggestMappingsBatchwise };

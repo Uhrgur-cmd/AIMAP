@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../utils/api';
 import ExpressionBuilder from './ExpressionBuilder';
 
-export default function MappingView({ machine, onRefresh }) {
+export default function MappingView({ machine, onRefresh, dataModelVersion }) {
   const [signals, setSignals] = useState([]);
   const [dataModel, setDataModel] = useState({ signals: [] });
   const [mappings, setMappings] = useState([]);
@@ -12,6 +12,7 @@ export default function MappingView({ machine, onRefresh }) {
   const [scanning, setScanning] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [aiProgress, setAiProgress] = useState(null); // { status, progress, total, mapped, currentGroup }
+  const [minConfidence, setMinConfidence] = useState(85); // Minimum confidence % to show
   const fileInputRef = useRef(null);
   const pollRef = useRef(null);
 
@@ -22,7 +23,7 @@ export default function MappingView({ machine, onRefresh }) {
     }
   }, [machine?.id, machine?._refreshKey, machine?.project_last_parsed]);
 
-  useEffect(() => { loadDataModel(); }, []);
+  useEffect(() => { loadDataModel(); }, [dataModelVersion]);
 
   async function loadSignals() {
     try {
@@ -209,6 +210,15 @@ export default function MappingView({ machine, onRefresh }) {
           >
             {suggesting ? 'AI läuft...' : 'AI Suggest'}
           </button>
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            <span>Min:</span>
+            <input
+              type="range" min="50" max="100" value={minConfidence}
+              onChange={e => setMinConfidence(parseInt(e.target.value))}
+              className="w-20 h-1 accent-purple-500"
+            />
+            <span className="text-purple-400 font-mono w-8">{minConfidence}%</span>
+          </div>
         </div>
       </div>
 
@@ -287,6 +297,7 @@ export default function MappingView({ machine, onRefresh }) {
             )}
             {dataModel.signals?.map(target => {
               const mapping = mappingsByTarget.get(target.name);
+              const belowThreshold = mapping && (mapping.confidence || 0) * 100 < minConfidence;
               const isEditing = editingTarget === target.name;
 
               return (
@@ -335,7 +346,7 @@ export default function MappingView({ machine, onRefresh }) {
                   )}
 
                   {/* Current mapping display */}
-                  {mapping && !isEditing && (
+                  {mapping && !isEditing && !belowThreshold && (
                     <div className="mt-2 bg-gray-900 rounded p-2 text-xs">
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">{mapping.mapping_type}:</span>
@@ -354,9 +365,55 @@ export default function MappingView({ machine, onRefresh }) {
                           </button>
                         </div>
                       </div>
-                      <code className="text-green-400 block mt-1">
-                        {mapping.source_address || mapping.expression || '-'}
-                      </code>
+                      {mapping.mapping_type === 'lookup' && mapping.lookup_table ? (() => {
+                        const table = typeof mapping.lookup_table === 'string' ? JSON.parse(mapping.lookup_table) : mapping.lookup_table;
+                        // Collect all PLC addresses from all conditions for comment lookup
+                        const allAddrs = new Set();
+                        Object.keys(table).forEach(cond => {
+                          const matches = cond.match(/DB\d+\.DB[XBWD]\d+(?:\.\d+)?|[IQM]\d+(?:\.\d+)?/g);
+                          if (matches) matches.forEach(a => allAddrs.add(a));
+                        });
+                        const addrComments = {};
+                        allAddrs.forEach(a => {
+                          const sig = signals.find(s => s.address === a);
+                          if (sig) addrComments[a] = sig.name + (sig.comment ? ' // ' + sig.comment : '');
+                        });
+
+                        return (
+                          <div className="mt-1 space-y-1">
+                            {Object.entries(table).map(([condition, value], i) => (
+                              <div key={i}>
+                                <div className="flex gap-1 text-[11px]">
+                                  <span className="text-yellow-400 font-mono shrink-0">{condition === 'DEFAULT' ? 'ELSE' : 'IF'}</span>
+                                  <span className="text-green-400 font-mono flex-1">{condition === 'DEFAULT' ? '' : condition}</span>
+                                  <span className="text-gray-500">→</span>
+                                  <span className="text-cyan-300 font-medium shrink-0">'{value}'</span>
+                                </div>
+                                {/* Show comments for addresses in this condition */}
+                                {condition !== 'DEFAULT' && (() => {
+                                  const addrs = condition.match(/DB\d+\.DB[XBWD]\d+(?:\.\d+)?|[IQM]\d+(?:\.\d+)?/g) || [];
+                                  const unique = [...new Set(addrs)];
+                                  if (unique.length === 0) return null;
+                                  return (
+                                    <div className="ml-6 space-y-0">
+                                      {unique.map(a => addrComments[a] ? (
+                                        <div key={a} className="text-[9px] text-gray-500">
+                                          <span className="text-blue-400/50 font-mono">{a}</span> {addrComments[a]}
+                                        </div>
+                                      ) : null)}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })(
+                      ) : (
+                        <code className="text-green-400 block mt-1">
+                          {mapping.source_address || mapping.expression || '-'}
+                        </code>
+                      )}
                       {/* Show PLC signal comments for referenced addresses */}
                       {(() => {
                         const text = mapping.source_address || mapping.expression || '';
@@ -395,16 +452,40 @@ export default function MappingView({ machine, onRefresh }) {
                     />
                   )}
 
-                  {/* Drop zone for unmapped */}
-                  {!mapping && !isEditing && (
+                  {/* Drop zone for unmapped or below-threshold */}
+                  {(!mapping || belowThreshold) && !isEditing && (
                     <div className="mt-2 border border-dashed border-gray-600 rounded p-3 text-center text-xs text-gray-500">
-                      Drag a signal here or{' '}
-                      <button
-                        onClick={() => setEditingTarget(target.name)}
-                        className="text-blue-400 hover:underline"
-                      >
-                        build expression
-                      </button>
+                      {belowThreshold ? (() => {
+                        const addr = mapping.source_address || mapping.expression || '';
+                        const addrMatches = addr.match(/DB\d+\.DB[XBWD]\d+(?:\.\d+)?|[IQM]\d+(?:\.\d+)?/g) || [];
+                        return (
+                          <div className="text-left">
+                            <div className="text-yellow-500/70 text-[10px] mb-1">
+                              AI ({Math.round((mapping.confidence || 0) * 100)}%): {mapping.reasoning || 'low confidence'}
+                            </div>
+                            <div className="text-[10px] text-gray-600 font-mono">
+                              {addr || (mapping.mapping_type === 'lookup' ? 'lookup' : '')}
+                            </div>
+                            {addrMatches.map(a => {
+                              const sig = signals.find(s => s.address === a);
+                              return sig ? (
+                                <div key={a} className="text-[9px] text-gray-500">
+                                  <span className="text-blue-400/50 font-mono">{a}</span> {sig.name}{sig.comment ? ' // ' + sig.comment : ''}
+                                </div>
+                              ) : null;
+                            })}
+                          </div>
+                        );
+                      })() : null}
+                      <div className={belowThreshold ? '' : ''}>
+                        Drag a signal here or{' '}
+                        <button
+                          onClick={() => setEditingTarget(target.name)}
+                          className="text-blue-400 hover:underline"
+                        >
+                          build expression
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

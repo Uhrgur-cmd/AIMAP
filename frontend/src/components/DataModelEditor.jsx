@@ -13,7 +13,7 @@ const DEFAULT_SIGNALS = [
   { name: 'oee_availability', data_type: 'REAL', unit: '%', description: 'Calculated OEE availability' }
 ];
 
-export default function DataModelEditor({ onClose }) {
+export default function DataModelEditor({ onClose, onSave }) {
   const [signals, setSignals] = useState([]);
   const [saving, setSaving] = useState(false);
 
@@ -50,6 +50,7 @@ export default function DataModelEditor({ onClose }) {
     setSaving(true);
     try {
       await api.put('/api/datamodel', { signals: valid });
+      if (onSave) onSave();
       onClose();
     } catch (err) {
       alert('Save failed: ' + err.message);

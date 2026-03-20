@@ -6,12 +6,7 @@ const pool = require('../db/pool');
 router.get('/machine/:machineId', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT s.*, nc.comment as network_context
-       FROM signals s
-       LEFT JOIN network_comments nc ON nc.machine_id = s.machine_id
-         AND s.address = ANY(nc.signals_referenced)
-       WHERE s.machine_id = $1
-       ORDER BY s.address`,
+      `SELECT * FROM signals WHERE machine_id = $1 ORDER BY address`,
       [req.params.machineId]
     );
     res.json(rows);
