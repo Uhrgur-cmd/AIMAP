@@ -1,0 +1,152 @@
+{{/* ── Siemens S7 Connector ──────────────────────────────────────────────── */}}
+{{- if .Values.connectors.siemensS7.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-connector-siemens-s7
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.connectors.siemensS7.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ct-gate.selectorLabels" (dict "component" "connector-siemens-s7" "Release" .Release) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ct-gate.selectorLabels" (dict "component" "connector-siemens-s7" "Release" .Release) | nindent 8 }}
+    spec:
+      containers:
+        - name: siemens-s7
+          image: {{ .Values.connectors.siemensS7.image.repository }}:{{ .Values.connectors.siemensS7.image.tag }}
+          imagePullPolicy: {{ .Values.connectors.siemensS7.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.connectors.siemensS7.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.connectors.siemensS7.port | quote }}
+          resources:
+            {{- toYaml .Values.connectors.siemensS7.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.connectors.siemensS7.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-connector-siemens-s7
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "ct-gate.selectorLabels" (dict "component" "connector-siemens-s7" "Release" .Release) | nindent 4 }}
+  ports:
+    - port: {{ .Values.connectors.siemensS7.port }}
+      targetPort: {{ .Values.connectors.siemensS7.port }}
+{{- end }}
+
+{{/* ── Siemens OPC-UA Connector ─────────────────────────────────────────── */}}
+{{- if .Values.connectors.siemensOpc.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-connector-siemens-opc
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.connectors.siemensOpc.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ct-gate.selectorLabels" (dict "component" "connector-siemens-opc" "Release" .Release) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ct-gate.selectorLabels" (dict "component" "connector-siemens-opc" "Release" .Release) | nindent 8 }}
+    spec:
+      containers:
+        - name: siemens-opc
+          image: {{ .Values.connectors.siemensOpc.image.repository }}:{{ .Values.connectors.siemensOpc.image.tag }}
+          imagePullPolicy: {{ .Values.connectors.siemensOpc.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.connectors.siemensOpc.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.connectors.siemensOpc.port | quote }}
+          resources:
+            {{- toYaml .Values.connectors.siemensOpc.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.connectors.siemensOpc.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-connector-siemens-opc
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "ct-gate.selectorLabels" (dict "component" "connector-siemens-opc" "Release" .Release) | nindent 4 }}
+  ports:
+    - port: {{ .Values.connectors.siemensOpc.port }}
+      targetPort: {{ .Values.connectors.siemensOpc.port }}
+{{- end }}
+
+{{/* ── Rockwell Connector ───────────────────────────────────────────────── */}}
+{{- if .Values.connectors.rockwell.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-connector-rockwell
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.connectors.rockwell.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ct-gate.selectorLabels" (dict "component" "connector-rockwell" "Release" .Release) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ct-gate.selectorLabels" (dict "component" "connector-rockwell" "Release" .Release) | nindent 8 }}
+    spec:
+      containers:
+        - name: rockwell
+          image: {{ .Values.connectors.rockwell.image.repository }}:{{ .Values.connectors.rockwell.image.tag }}
+          imagePullPolicy: {{ .Values.connectors.rockwell.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.connectors.rockwell.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.connectors.rockwell.port | quote }}
+          resources:
+            {{- toYaml .Values.connectors.rockwell.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.connectors.rockwell.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-connector-rockwell
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "ct-gate.selectorLabels" (dict "component" "connector-rockwell" "Release" .Release) | nindent 4 }}
+  ports:
+    - port: {{ .Values.connectors.rockwell.port }}
+      targetPort: {{ .Values.connectors.rockwell.port }}
+{{- end }}

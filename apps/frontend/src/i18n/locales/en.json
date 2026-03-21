@@ -1,0 +1,121 @@
+{
+  "sidebar": {
+    "subtitle": "PLC Signal Mapping",
+    "machines": "Machines",
+    "addButton": "+ Add",
+    "dataModel": "Standard Data Model",
+    "opcuaValues": "OPC UA Values",
+    "noMachines": "No machines added yet."
+  },
+  "app": {
+    "welcome": {
+      "subtitle": "PLC Signal Mapping Platform",
+      "instructions": "Select a machine or add a new one to get started."
+    }
+  },
+  "topbar": {
+    "uploadProject": "Upload Project",
+    "uploading": "Uploading...",
+    "liveScan": "Live Scan",
+    "connecting": "Connecting...",
+    "dbLabel": "DB",
+    "aiSuggest": "AI Suggest",
+    "aiRunning": "AI running...",
+    "liveConfirmed": "{{count}} live confirmed",
+    "aiConfirmReplace": "Warning: There are {{count}} existing mappings.\n\nAI Suggest will REPLACE ALL existing mappings with new suggestions.\nContinue?",
+    "aiError": "AI Error: {{error}}",
+    "uploadStep1": "Reading project file...",
+    "uploadStep2": "Parsing signals & blocks...",
+    "uploadStep3": "Validating with live PLC...",
+    "uploadStep4": "Saving to database..."
+  },
+  "scan": {
+    "scanningDb": "Scanning DB {{db}} of {{total}}...",
+    "connectingToPLC": "Connecting to PLC...",
+    "signalsFound": "{{count}} signals found",
+    "aiMapping": "AI Mapping: {{group}}",
+    "aiStarting": "Starting...",
+    "aiProgress": "{{mapped}} mapped | Batch {{progress}}/{{total}}"
+  },
+  "signals": {
+    "noSignals": "No signals found. Upload a project file or run a live scan.",
+    "filterPlaceholder": "Filter signals...",
+    "plcVariables": "PLC Variables",
+    "opcuaOutput": "OPC UA Output Values",
+    "filterSDM": "Filter by name, type or description...",
+    "live": "live",
+    "panelTitle": "Standard Data Model",
+    "noDataModel": "No data model defined. Click \"Standard Data Model\" in the sidebar."
+  },
+  "mapping": {
+    "dragHint": "Drag a signal here or",
+    "buildExpression": "build expression",
+    "edit": "edit",
+    "remove": "remove",
+    "validated": "validated",
+    "aiReasoning": "AI: {{text}}",
+    "minConfidence": "Min confidence: {{value}}%"
+  },
+  "modal": {
+    "addTitle": "Add Machine",
+    "editTitle": "Edit Machine",
+    "machineName": "Machine Name",
+    "machineNamePlaceholder": "e.g. Injection Line 1",
+    "plcType": "PLC Type",
+    "ipAddress": "IP Address",
+    "rack": "Rack",
+    "slot": "Slot",
+    "opcuaToggle": "Use OPC UA (requires activation in TIA Portal)",
+    "projectFile": "Project File",
+    "optional": "(optional)",
+    "clickToSelect": "Click to select file",
+    "format": "Format:",
+    "removeFile": "Remove file",
+    "addScan": "Add & Scan",
+    "saveChanges": "Save Changes",
+    "addMachine": "Add Machine",
+    "cancel": "Cancel",
+    "saving": "Saving...",
+    "failed": "Failed: ",
+    "liveScanHint": {
+      "rockwell": "Signals will be automatically read from the PLC via EtherNet/IP.",
+      "s7": "Signals will be automatically read from the PLC via {{protocol}}.",
+      "opcuaNote": " OPC UA must be enabled in the CPU.",
+      "afterAdd": "A live scan will be started after adding."
+    }
+  },
+  "dataModel": {
+    "title": "Standard Data Model",
+    "importJson": "Import JSON",
+    "exportJson": "Export JSON",
+    "nameCol": "Name",
+    "typeCol": "Type",
+    "unitCol": "Unit",
+    "descriptionCol": "Description",
+    "addSignal": "+ Add Signal",
+    "save": "Save Data Model",
+    "cancel": "Cancel",
+    "saving": "Saving...",
+    "invalidJson": "Invalid JSON file",
+    "saveFailed": "Save failed: "
+  },
+  "expression": {
+    "sourceLabel": "Source address:",
+    "expressionLabel": "Expression:",
+    "signalNotFound": "signal not found in parsed list",
+    "directPlaceholder": "DB10.DBD0 or I1000.7",
+    "expressionPlaceholder": "DB10.DBX4.0 AND DB10.DBD0 > 100",
+    "lookupComingSoon": "Lookup table editor coming soon. Use expression type for now.",
+    "save": "Save Mapping",
+    "cancel": "Cancel"
+  },
+  "lang": {
+    "en": "English",
+    "de": "Deutsch",
+    "es": "Español",
+    "ro": "Română",
+    "hu": "Magyar",
+    "zh": "中文",
+    "pt-BR": "Português BR"
+  }
+}

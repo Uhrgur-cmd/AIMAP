@@ -1,0 +1,16 @@
+apiVersion: v2
+name: ct-gate
+description: CT-Gate – Industrial PLC data gateway with AI-assisted signal mapping
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - plc
+  - scada
+  - iot
+  - siemens
+  - rockwell
+  - edge
+home: https://github.com/your-org/ct-gate
+maintainers:
+  - name: CT-Gate Team

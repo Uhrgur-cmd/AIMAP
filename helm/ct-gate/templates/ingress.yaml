@@ -1,0 +1,42 @@
+{{- if .Values.ingress.enabled }}
+---
+# Traefik Middleware: strip /api prefix before forwarding to backend
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ .Release.Name }}-strip-api-prefix
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  stripPrefix:
+    prefixes:
+      - /api
+---
+# IngressRoute: route /api/* → backend, /* → frontend
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - {{ .Values.ingress.entrypoint }}
+  routes:
+    # Backend API (keep /api prefix inside the service – nginx proxy strips it)
+    - match: Host(`{{ .Values.ingress.host }}`) && PathPrefix(`/api`)
+      kind: Rule
+      services:
+        - name: {{ .Release.Name }}-backend
+          port: {{ .Values.backend.port }}
+    # Frontend SPA – everything else
+    - match: Host(`{{ .Values.ingress.host }}`)
+      kind: Rule
+      services:
+        - name: {{ .Release.Name }}-frontend
+          port: {{ .Values.frontend.port }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    secretName: {{ .Values.ingress.tlsSecretName }}
+  {{- end }}
+{{- end }}

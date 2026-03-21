@@ -1,0 +1,15 @@
+{
+  "name": "ct-gate-opcua-server",
+  "version": "1.0.0",
+  "description": "CT-Gate OPC UA Server – exposes machine mappings as live OPC UA variables",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "expr-eval": "^2.0.2",
+    "express": "^4.19.2",
+    "node-opcua": "^2.118.0"
+  }
+}

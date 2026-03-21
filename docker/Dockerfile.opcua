@@ -1,0 +1,15 @@
+FROM node:20-alpine
+
+# node-opcua needs native build tools for some optional crypto modules
+RUN apk add --no-cache python3 make g++
+
+WORKDIR /app
+
+COPY apps/opcua-server/package*.json ./
+RUN npm install --production
+
+COPY apps/opcua-server/src ./src
+
+EXPOSE 4840
+
+CMD ["node", "src/index.js"]

@@ -1,101 +1,121 @@
-version: '3.8'
+version: '3.9'
 
 services:
+  # ── Database ────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: aimap
-      POSTGRES_PASSWORD: aimap
-      POSTGRES_DB: aimap
+      POSTGRES_DB: ctgate
+      POSTGRES_USER: ctgate
+      POSTGRES_PASSWORD: ctgate
     volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aimap"]
+      test: ["CMD-SHELL", "pg_isready -U ctgate"]
       interval: 5s
-      timeout: 3s
-      retries: 5
+      timeout: 5s
+      retries: 10
 
+  # ── Backend ─────────────────────────────────────────────────
   backend:
     build:
       context: ..
       dockerfile: docker/Dockerfile.backend
-    environment:
-      DATABASE_URL: postgresql://aimap:aimap@postgres:5432/aimap
-      SIEMENS_S7_URL: http://siemens-s7:8300
-      SIEMENS_OPCUA_URL: http://siemens-browser:8200
-      ROCKWELL_URL: http://rockwell:8100
-      OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: llama3.1:8b
-      UPLOAD_PATH: /app/uploads
-    ports:
-      - "3000:3000"
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://ctgate:ctgate@postgres:5432/ctgate
+      PORT: 3050
+      # Connector endpoints
+      SIEMENS_S7_URL: http://siemens-s7:8300
+      SIEMENS_OPC_URL: http://siemens-opc:8301
+      ROCKWELL_URL: http://rockwell:8302
+      # AI providers (set in .env)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
     volumes:
       - uploads:/app/uploads
 
+  # ── Frontend ─────────────────────────────────────────────────
   frontend:
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
-    ports:
-      - "8080:80"
+    restart: unless-stopped
     depends_on:
       - backend
+    ports:
+      - "8080:80"
 
+  # ── Collector ────────────────────────────────────────────────
   collector:
     build:
       context: ..
       dockerfile: docker/Dockerfile.collector
-    environment:
-      BACKEND_URL: http://backend:3000
-      SIEMENS_S7_URL: http://siemens-s7:8300
-      SIEMENS_OPCUA_URL: http://siemens-browser:8200
-      ROCKWELL_URL: http://rockwell:8100
-      POLL_INTERVAL: "1000"
+    restart: unless-stopped
     depends_on:
       - backend
+    environment:
+      BACKEND_URL: http://backend:3050
+      POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-10000}
+      MQTT_BROKER: ${MQTT_BROKER:-}
+      MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-ctgate}
 
-  # Local LLM for AI Mapping (no internet, no API costs)
-  ollama:
-    image: ollama/ollama:latest
+  # ── OPC UA Server ────────────────────────────────────────────
+  opcua-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.opcua
+    restart: unless-stopped
+    depends_on:
+      - backend
     ports:
-      - "11434:11434"
-    volumes:
-      - ollama-models:/root/.ollama
-    # Uncomment for GPU acceleration:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - capabilities: [gpu]
+      - "4840:4840"
+      # 4841 is internal only — nginx proxies /opcua-api/ → opcua-server:4841
+    environment:
+      BACKEND_URL: http://backend:3050
+      SIEMENS_S7_URL: http://siemens-s7:8300
+      ROCKWELL_URL: http://rockwell:8302
+      OPC_PORT: 4840
+      HTTP_PORT: 4841
+      POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-5000}
 
-  # Existing connectors (from ct-plc-connectors)
+  # ── PLC Connectors ───────────────────────────────────────────
   siemens-s7:
     build:
       context: ..
-      dockerfile: connectors/docker/Dockerfile.siemens-s7
+      dockerfile: docker/Dockerfile.siemens-s7
+    restart: unless-stopped
     ports:
       - "8300:8300"
+    environment:
+      PORT: 8300
 
-  siemens-browser:
+  siemens-opc:
     build:
       context: ..
-      dockerfile: connectors/docker/Dockerfile.siemens-browser
+      dockerfile: docker/Dockerfile.siemens-opc
+    restart: unless-stopped
     ports:
-      - "8200:8200"
+      - "8301:8301"
+    environment:
+      PORT: 8301
 
   rockwell:
     build:
       context: ..
-      dockerfile: connectors/docker/Dockerfile.rockwell
+      dockerfile: docker/Dockerfile.rockwell
+    restart: unless-stopped
     ports:
-      - "8100:8100"
+      - "8302:8302"
+    environment:
+      PORT: 8302
 
 volumes:
-  pgdata:
+  postgres_data:
   uploads:
-  ollama-models:

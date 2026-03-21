@@ -1,0 +1,121 @@
+{
+  "sidebar": {
+    "subtitle": "PLC jel leképezés",
+    "machines": "Gépek",
+    "addButton": "+ Hozzáadás",
+    "dataModel": "Standard adatmodell",
+    "opcuaValues": "OPC UA értékek",
+    "noMachines": "Még nincs gép hozzáadva."
+  },
+  "app": {
+    "welcome": {
+      "subtitle": "PLC jel leképezési platform",
+      "instructions": "Válasszon egy gépet, vagy adjon hozzá újat a kezdéshez."
+    }
+  },
+  "topbar": {
+    "uploadProject": "Projekt feltöltése",
+    "uploading": "Feltöltés...",
+    "liveScan": "Élő szkennelés",
+    "connecting": "Csatlakozás...",
+    "dbLabel": "DB",
+    "aiSuggest": "AI javaslat",
+    "aiRunning": "AI fut...",
+    "liveConfirmed": "{{count}} élőben megerősítve",
+    "aiConfirmReplace": "Figyelmeztetés: {{count}} meglévő leképezés van.\n\nAz AI javaslat az ÖSSZES meglévő leképezést új javaslatokra cseréli.\nFolytatja?",
+    "aiError": "AI hiba: {{error}}",
+    "uploadStep1": "Projektfájl olvasása...",
+    "uploadStep2": "Jelek és blokkok elemzése...",
+    "uploadStep3": "Éló PLC validálása...",
+    "uploadStep4": "Mentés adatbázisba..."
+  },
+  "scan": {
+    "scanningDb": "DB {{db}} szkennelése {{total}} közül...",
+    "connectingToPLC": "Csatlakozás a PLC-hez...",
+    "signalsFound": "{{count}} jel találva",
+    "aiMapping": "AI leképezés: {{group}}",
+    "aiStarting": "Indítás...",
+    "aiProgress": "{{mapped}} leképezve | Köteg {{progress}}/{{total}}"
+  },
+  "signals": {
+    "noSignals": "Nem találhatók jelek. Töltsön fel egy projektfájlt, vagy futtasson élő szkennelést.",
+    "filterPlaceholder": "Jelek szűrése...",
+    "plcVariables": "PLC változók",
+    "opcuaOutput": "OPC UA kimeneti értékek",
+    "filterSDM": "Szűrés név, típus vagy leírás alapján...",
+    "live": "élő",
+    "panelTitle": "Standard adatmodell",
+    "noDataModel": "Nincs meghatározott adatmodell. Kattintson a \"Standard adatmodell\" gombra az oldalsávban."
+  },
+  "mapping": {
+    "dragHint": "Húzzon ide egy jelet, vagy",
+    "buildExpression": "kifejezés összeállítása",
+    "edit": "szerkesztés",
+    "remove": "eltávolítás",
+    "validated": "érvényesítve",
+    "aiReasoning": "AI: {{text}}",
+    "minConfidence": "Min. bizalom: {{value}}%"
+  },
+  "modal": {
+    "addTitle": "Gép hozzáadása",
+    "editTitle": "Gép szerkesztése",
+    "machineName": "Gép neve",
+    "machineNamePlaceholder": "pl. Fröccsöntő sor 1",
+    "plcType": "PLC típus",
+    "ipAddress": "IP-cím",
+    "rack": "Rack",
+    "slot": "Nyílás",
+    "opcuaToggle": "OPC UA használata (aktiválás szükséges a TIA Portalban)",
+    "projectFile": "Projektfájl",
+    "optional": "(nem kötelező)",
+    "clickToSelect": "Kattintson a fájl kiválasztásához",
+    "format": "Formátum:",
+    "removeFile": "Fájl eltávolítása",
+    "addScan": "Hozzáadás és szkennelés",
+    "saveChanges": "Változtatások mentése",
+    "addMachine": "Gép hozzáadása",
+    "cancel": "Mégse",
+    "saving": "Mentés...",
+    "failed": "Hiba: ",
+    "liveScanHint": {
+      "rockwell": "A jeleket automatikusan olvassa be a PLC-ből EtherNet/IP-n keresztül.",
+      "s7": "A jeleket automatikusan olvassa be a PLC-ből {{protocol}}-n keresztül.",
+      "opcuaNote": " Az OPC UA-t engedélyezni kell a CPU-ban.",
+      "afterAdd": "A hozzáadás után élő szkennelés indul."
+    }
+  },
+  "dataModel": {
+    "title": "Standard adatmodell",
+    "importJson": "JSON importálása",
+    "exportJson": "JSON exportálása",
+    "nameCol": "Név",
+    "typeCol": "Típus",
+    "unitCol": "Egység",
+    "descriptionCol": "Leírás",
+    "addSignal": "+ Jel hozzáadása",
+    "save": "Adatmodell mentése",
+    "cancel": "Mégse",
+    "saving": "Mentés...",
+    "invalidJson": "Érvénytelen JSON-fájl",
+    "saveFailed": "Mentési hiba: "
+  },
+  "expression": {
+    "sourceLabel": "Forráscím:",
+    "expressionLabel": "Kifejezés:",
+    "signalNotFound": "jel nem található a listában",
+    "directPlaceholder": "DB10.DBD0 vagy I1000.7",
+    "expressionPlaceholder": "DB10.DBX4.0 AND DB10.DBD0 > 100",
+    "lookupComingSoon": "A keresőtábla-szerkesztő hamarosan elérhető. Egyelőre használja a kifejezés típust.",
+    "save": "Leképezés mentése",
+    "cancel": "Mégse"
+  },
+  "lang": {
+    "en": "English",
+    "de": "Deutsch",
+    "es": "Español",
+    "ro": "Română",
+    "hu": "Magyar",
+    "zh": "中文",
+    "pt-BR": "Português BR"
+  }
+}

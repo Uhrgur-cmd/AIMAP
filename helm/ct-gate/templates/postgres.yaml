@@ -1,0 +1,80 @@
+---
+# PersistentVolumeClaim for postgres data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-postgres-pvc
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.postgres.storageSize }}
+  {{- if .Values.postgres.storageClass }}
+  storageClassName: {{ .Values.postgres.storageClass }}
+  {{- end }}
+---
+# StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-postgres
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ct-gate.selectorLabels" (dict "component" "postgres" "Release" .Release) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ct-gate.selectorLabels" (dict "component" "postgres" "Release" .Release) | nindent 8 }}
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                {{- include "ct-gate.postgresPassword" . | nindent 16 }}
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-postgres-pvc
+---
+# Headless service for StatefulSet + regular service for backends
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-postgres
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "ct-gate.selectorLabels" (dict "component" "postgres" "Release" .Release) | nindent 4 }}
+  ports:
+    - port: 5432
+      targetPort: 5432

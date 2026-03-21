@@ -1,0 +1,108 @@
+---
+# PVC for uploaded project files
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-uploads-pvc
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.backend.uploadStorageSize }}
+  {{- if .Values.backend.uploadStorageClass }}
+  storageClassName: {{ .Values.backend.uploadStorageClass }}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-backend
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ct-gate.selectorLabels" (dict "component" "backend" "Release" .Release) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ct-gate.selectorLabels" (dict "component" "backend" "Release" .Release) | nindent 8 }}
+    spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z {{ .Release.Name }}-postgres 5432; do sleep 2; done']
+      containers:
+        - name: backend
+          image: {{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.backend.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.backend.port | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                {{- include "ct-gate.postgresPassword" . | nindent 16 }}
+            - name: DATABASE_URL
+              value: {{ include "ct-gate.databaseUrl" . | quote }}
+            - name: SIEMENS_S7_URL
+              value: "http://{{ .Release.Name }}-connector-siemens-s7:{{ .Values.connectors.siemensS7.port }}"
+            - name: SIEMENS_OPC_URL
+              value: "http://{{ .Release.Name }}-connector-siemens-opc:{{ .Values.connectors.siemensOpc.port }}"
+            - name: ROCKWELL_URL
+              value: "http://{{ .Release.Name }}-connector-rockwell:{{ .Values.connectors.rockwell.port }}"
+            - name: ANTHROPIC_MODEL
+              value: {{ .Values.backend.env.ANTHROPIC_MODEL | quote }}
+            {{- if .Values.backend.existingSecret }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.existingSecret }}
+                  key: openai-api-key
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.existingSecret }}
+                  key: anthropic-api-key
+                  optional: true
+            {{- end }}
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.backend.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.backend.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-uploads-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-backend
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "ct-gate.selectorLabels" (dict "component" "backend" "Release" .Release) | nindent 4 }}
+  ports:
+    - port: {{ .Values.backend.port }}
+      targetPort: {{ .Values.backend.port }}

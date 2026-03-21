@@ -1,0 +1,121 @@
+{
+  "sidebar": {
+    "subtitle": "Mapare semnale PLC",
+    "machines": "Mașini",
+    "addButton": "+ Adaugă",
+    "dataModel": "Model de date standard",
+    "opcuaValues": "Valori OPC UA",
+    "noMachines": "Nu există mașini adăugate."
+  },
+  "app": {
+    "welcome": {
+      "subtitle": "Platformă de mapare semnale PLC",
+      "instructions": "Selectați o mașină sau adăugați una nouă pentru a începe."
+    }
+  },
+  "topbar": {
+    "uploadProject": "Încarcă proiect",
+    "uploading": "Se încarcă...",
+    "liveScan": "Scanare live",
+    "connecting": "Se conectează...",
+    "dbLabel": "DB",
+    "aiSuggest": "Sugestie AI",
+    "aiRunning": "AI rulează...",
+    "liveConfirmed": "{{count}} confirmate live",
+    "aiConfirmReplace": "Atenție: Există {{count}} mapări existente.\n\nSugestia AI va înlocui TOATE mapările existente cu sugestii noi.\nContinuați?",
+    "aiError": "Eroare AI: {{error}}",
+    "uploadStep1": "Se citește fișierul proiectului...",
+    "uploadStep2": "Se analizează semnale și blocuri...",
+    "uploadStep3": "Validare cu PLC live...",
+    "uploadStep4": "Salvare în baza de date..."
+  },
+  "scan": {
+    "scanningDb": "Se scanează DB {{db}} din {{total}}...",
+    "connectingToPLC": "Se conectează la PLC...",
+    "signalsFound": "{{count}} semnale găsite",
+    "aiMapping": "Mapare AI: {{group}}",
+    "aiStarting": "Se pornește...",
+    "aiProgress": "{{mapped}} mapate | Lot {{progress}}/{{total}}"
+  },
+  "signals": {
+    "noSignals": "Nu s-au găsit semnale. Încărcați un fișier de proiect sau rulați o scanare live.",
+    "filterPlaceholder": "Filtrare semnale...",
+    "plcVariables": "Variabile PLC",
+    "opcuaOutput": "Valori ieșire OPC UA",
+    "filterSDM": "Filtrați după nume, tip sau descriere...",
+    "live": "live",
+    "panelTitle": "Model de date standard",
+    "noDataModel": "Niciun model de date definit. Faceți clic pe \"Model de date standard\" în bara laterală."
+  },
+  "mapping": {
+    "dragHint": "Trageți un semnal aici sau",
+    "buildExpression": "construiți expresie",
+    "edit": "editare",
+    "remove": "eliminare",
+    "validated": "validat",
+    "aiReasoning": "AI: {{text}}",
+    "minConfidence": "Încredere min.: {{value}}%"
+  },
+  "modal": {
+    "addTitle": "Adaugă mașină",
+    "editTitle": "Editează mașină",
+    "machineName": "Nume mașină",
+    "machineNamePlaceholder": "ex. Linie injecție 1",
+    "plcType": "Tip PLC",
+    "ipAddress": "Adresă IP",
+    "rack": "Rack",
+    "slot": "Slot",
+    "opcuaToggle": "Folosiți OPC UA (necesită activare în TIA Portal)",
+    "projectFile": "Fișier proiect",
+    "optional": "(opțional)",
+    "clickToSelect": "Faceți clic pentru a selecta fișierul",
+    "format": "Format:",
+    "removeFile": "Elimină fișier",
+    "addScan": "Adaugă și scanează",
+    "saveChanges": "Salvează modificările",
+    "addMachine": "Adaugă mașină",
+    "cancel": "Anulează",
+    "saving": "Se salvează...",
+    "failed": "Eroare: ",
+    "liveScanHint": {
+      "rockwell": "Semnalele vor fi citite automat din PLC prin EtherNet/IP.",
+      "s7": "Semnalele vor fi citite automat din PLC prin {{protocol}}.",
+      "opcuaNote": " OPC UA trebuie activat în CPU.",
+      "afterAdd": "O scanare live va fi pornită după adăugare."
+    }
+  },
+  "dataModel": {
+    "title": "Model de date standard",
+    "importJson": "Import JSON",
+    "exportJson": "Export JSON",
+    "nameCol": "Nume",
+    "typeCol": "Tip",
+    "unitCol": "Unitate",
+    "descriptionCol": "Descriere",
+    "addSignal": "+ Adaugă semnal",
+    "save": "Salvează modelul de date",
+    "cancel": "Anulează",
+    "saving": "Se salvează...",
+    "invalidJson": "Fișier JSON invalid",
+    "saveFailed": "Eroare la salvare: "
+  },
+  "expression": {
+    "sourceLabel": "Adresă sursă:",
+    "expressionLabel": "Expresie:",
+    "signalNotFound": "semnal negăsit în listă",
+    "directPlaceholder": "DB10.DBD0 sau I1000.7",
+    "expressionPlaceholder": "DB10.DBX4.0 AND DB10.DBD0 > 100",
+    "lookupComingSoon": "Editorul de tabel de căutare vine în curând. Folosiți tipul expresie deocamdată.",
+    "save": "Salvează maparea",
+    "cancel": "Anulează"
+  },
+  "lang": {
+    "en": "English",
+    "de": "Deutsch",
+    "es": "Español",
+    "ro": "Română",
+    "hu": "Magyar",
+    "zh": "中文",
+    "pt-BR": "Português BR"
+  }
+}

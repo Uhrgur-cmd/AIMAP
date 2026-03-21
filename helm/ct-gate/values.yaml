@@ -1,0 +1,136 @@
+# ── Global ──────────────────────────────────────────────────────────────────
+global:
+  imageRegistry: ""          # override, e.g. "registry.example.com/"
+  imagePullSecrets: []
+
+image:
+  repository: your-registry/ct-gate   # base repository; each component appends its suffix
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# ── Ingress (Traefik IngressRoute) ─────────────────────────────────────────
+ingress:
+  enabled: true
+  host: ct-gate.local          # override per environment
+  tls: false                   # set true + provide secretName for TLS
+  tlsSecretName: ct-gate-tls
+  entrypoint: web              # "websecure" when TLS is enabled
+
+# ── PostgreSQL ──────────────────────────────────────────────────────────────
+postgres:
+  image: postgres:16-alpine
+  database: ctgate
+  user: ctgate
+  # password is read from secret – set postgres.existingSecret or postgres.password
+  password: ctgate             # used only when existingSecret is empty
+  existingSecret: ""           # name of k8s Secret containing key "postgres-password"
+  storageSize: 5Gi
+  storageClass: ""             # leave empty for default StorageClass
+
+# ── Backend ─────────────────────────────────────────────────────────────────
+backend:
+  image:
+    repository: your-registry/ct-gate-backend
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 3000
+  uploadStorageSize: 2Gi
+  uploadStorageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    ANTHROPIC_MODEL: claude-sonnet-4-6
+    POLL_INTERVAL_MS: "10000"
+  # Secret holding: OPENAI_API_KEY, ANTHROPIC_API_KEY
+  existingSecret: ""           # name of k8s Secret; leave empty to skip
+
+# ── Frontend ────────────────────────────────────────────────────────────────
+frontend:
+  image:
+    repository: your-registry/ct-gate-frontend
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# ── Collector ────────────────────────────────────────────────────────────────
+collector:
+  image:
+    repository: your-registry/ct-gate-collector
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  env:
+    POLL_INTERVAL_MS: "10000"
+    MQTT_BROKER: ""
+    MQTT_TOPIC_PREFIX: ctgate
+
+# ── Connectors ───────────────────────────────────────────────────────────────
+connectors:
+  siemensS7:
+    enabled: true
+    image:
+      repository: your-registry/ct-gate-connector-siemens-s7
+      tag: "0.1.0"
+      pullPolicy: IfNotPresent
+    replicas: 1
+    port: 8300
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+
+  siemensOpc:
+    enabled: true
+    image:
+      repository: your-registry/ct-gate-connector-siemens-opc
+      tag: "0.1.0"
+      pullPolicy: IfNotPresent
+    replicas: 1
+    port: 8301
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+  rockwell:
+    enabled: true
+    image:
+      repository: your-registry/ct-gate-connector-rockwell
+      tag: "0.1.0"
+      pullPolicy: IfNotPresent
+    replicas: 1
+    port: 8302
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi

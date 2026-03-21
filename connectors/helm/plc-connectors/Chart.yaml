@@ -1,6 +1,0 @@
-apiVersion: v2
-name: plc-connectors
-description: "Edge connectors for Rockwell (EtherNet/IP), Siemens OPC UA browser, and Siemens classic S7."
-type: application
-version: 0.1.0
-appVersion: "0.1.0"

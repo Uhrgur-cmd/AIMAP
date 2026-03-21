@@ -1,0 +1,121 @@
+{
+  "sidebar": {
+    "subtitle": "Mapeo de señales PLC",
+    "machines": "Máquinas",
+    "addButton": "+ Agregar",
+    "dataModel": "Modelo de datos estándar",
+    "opcuaValues": "Valores OPC UA",
+    "noMachines": "Aún no hay máquinas agregadas."
+  },
+  "app": {
+    "welcome": {
+      "subtitle": "Plataforma de mapeo de señales PLC",
+      "instructions": "Seleccione una máquina o agregue una nueva para comenzar."
+    }
+  },
+  "topbar": {
+    "uploadProject": "Subir proyecto",
+    "uploading": "Subiendo...",
+    "liveScan": "Escaneo en vivo",
+    "connecting": "Conectando...",
+    "dbLabel": "DB",
+    "aiSuggest": "Sugerencia IA",
+    "aiRunning": "IA en proceso...",
+    "liveConfirmed": "{{count}} confirmados en vivo",
+    "aiConfirmReplace": "Atención: Hay {{count}} mapeos existentes.\n\nSugerencia IA reemplazará TODOS los mapeos existentes con nuevas sugerencias.\n¿Continuar?",
+    "aiError": "Error IA: {{error}}",
+    "uploadStep1": "Leyendo archivo de proyecto...",
+    "uploadStep2": "Analizando señales y bloques...",
+    "uploadStep3": "Validando con PLC en vivo...",
+    "uploadStep4": "Guardando en base de datos..."
+  },
+  "scan": {
+    "scanningDb": "Escaneando DB {{db}} de {{total}}...",
+    "connectingToPLC": "Conectando al PLC...",
+    "signalsFound": "{{count}} señales encontradas",
+    "aiMapping": "Mapeo IA: {{group}}",
+    "aiStarting": "Iniciando...",
+    "aiProgress": "{{mapped}} mapeados | Lote {{progress}}/{{total}}"
+  },
+  "signals": {
+    "noSignals": "No se encontraron señales. Suba un archivo de proyecto o ejecute un escaneo en vivo.",
+    "filterPlaceholder": "Filtrar señales...",
+    "plcVariables": "Variables PLC",
+    "opcuaOutput": "Valores de salida OPC UA",
+    "filterSDM": "Filtrar por nombre, tipo o descripción...",
+    "live": "vivo",
+    "panelTitle": "Modelo de datos estándar",
+    "noDataModel": "No hay modelo de datos definido. Haga clic en \"Modelo de datos estándar\" en la barra lateral."
+  },
+  "mapping": {
+    "dragHint": "Arrastre una señal aquí o",
+    "buildExpression": "construir expresión",
+    "edit": "editar",
+    "remove": "eliminar",
+    "validated": "validado",
+    "aiReasoning": "IA: {{text}}",
+    "minConfidence": "Confianza mín.: {{value}}%"
+  },
+  "modal": {
+    "addTitle": "Agregar máquina",
+    "editTitle": "Editar máquina",
+    "machineName": "Nombre de la máquina",
+    "machineNamePlaceholder": "ej. Línea de inyección 1",
+    "plcType": "Tipo de PLC",
+    "ipAddress": "Dirección IP",
+    "rack": "Rack",
+    "slot": "Ranura",
+    "opcuaToggle": "Usar OPC UA (requiere activación en TIA Portal)",
+    "projectFile": "Archivo de proyecto",
+    "optional": "(opcional)",
+    "clickToSelect": "Haga clic para seleccionar archivo",
+    "format": "Formato:",
+    "removeFile": "Eliminar archivo",
+    "addScan": "Agregar y escanear",
+    "saveChanges": "Guardar cambios",
+    "addMachine": "Agregar máquina",
+    "cancel": "Cancelar",
+    "saving": "Guardando...",
+    "failed": "Error: ",
+    "liveScanHint": {
+      "rockwell": "Las señales se leerán automáticamente del PLC vía EtherNet/IP.",
+      "s7": "Las señales se leerán automáticamente del PLC vía {{protocol}}.",
+      "opcuaNote": " OPC UA debe estar habilitado en la CPU.",
+      "afterAdd": "Se iniciará un escaneo en vivo después de agregar."
+    }
+  },
+  "dataModel": {
+    "title": "Modelo de datos estándar",
+    "importJson": "Importar JSON",
+    "exportJson": "Exportar JSON",
+    "nameCol": "Nombre",
+    "typeCol": "Tipo",
+    "unitCol": "Unidad",
+    "descriptionCol": "Descripción",
+    "addSignal": "+ Agregar señal",
+    "save": "Guardar modelo de datos",
+    "cancel": "Cancelar",
+    "saving": "Guardando...",
+    "invalidJson": "Archivo JSON inválido",
+    "saveFailed": "Error al guardar: "
+  },
+  "expression": {
+    "sourceLabel": "Dirección fuente:",
+    "expressionLabel": "Expresión:",
+    "signalNotFound": "señal no encontrada en la lista",
+    "directPlaceholder": "DB10.DBD0 o I1000.7",
+    "expressionPlaceholder": "DB10.DBX4.0 AND DB10.DBD0 > 100",
+    "lookupComingSoon": "Editor de tabla de búsqueda próximamente. Use el tipo de expresión por ahora.",
+    "save": "Guardar mapeo",
+    "cancel": "Cancelar"
+  },
+  "lang": {
+    "en": "English",
+    "de": "Deutsch",
+    "es": "Español",
+    "ro": "Română",
+    "hu": "Magyar",
+    "zh": "中文",
+    "pt-BR": "Português BR"
+  }
+}

@@ -1,8 +1,0 @@
-FROM node:20-alpine
-WORKDIR /app
-COPY apps/siemens-connector/package*.json ./
-RUN npm ci --omit=dev --no-audit --no-fund
-COPY apps/siemens-connector/src ./src
-ENV NODE_ENV=production
-EXPOSE 8300
-CMD ["node", "src/index.js"]

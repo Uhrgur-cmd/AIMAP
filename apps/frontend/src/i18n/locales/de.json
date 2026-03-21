@@ -1,0 +1,121 @@
+{
+  "sidebar": {
+    "subtitle": "SPS-Signalzuordnung",
+    "machines": "Maschinen",
+    "addButton": "+ Hinzufügen",
+    "dataModel": "Standard-Datenmodell",
+    "opcuaValues": "OPC UA Werte",
+    "noMachines": "Noch keine Maschinen angelegt."
+  },
+  "app": {
+    "welcome": {
+      "subtitle": "SPS-Signalzuordnungsplattform",
+      "instructions": "Wählen Sie eine Maschine aus oder fügen Sie eine neue hinzu."
+    }
+  },
+  "topbar": {
+    "uploadProject": "Projekt hochladen",
+    "uploading": "Wird hochgeladen...",
+    "liveScan": "Live-Scan",
+    "connecting": "Verbinde...",
+    "dbLabel": "DB",
+    "aiSuggest": "KI-Vorschlag",
+    "aiRunning": "KI läuft...",
+    "liveConfirmed": "{{count}} live bestätigt",
+    "aiConfirmReplace": "Achtung: Es gibt {{count}} bestehende Mappings.\n\nKI-Vorschlag ersetzt ALLE bestehenden Mappings durch neue Vorschläge.\nFortfahren?",
+    "aiError": "KI-Fehler: {{error}}",
+    "uploadStep1": "Projektdatei wird gelesen...",
+    "uploadStep2": "Signale & Bausteine werden analysiert...",
+    "uploadStep3": "Validierung mit Live-SPS...",
+    "uploadStep4": "In Datenbank speichern..."
+  },
+  "scan": {
+    "scanningDb": "Scanne DB {{db}} von {{total}}...",
+    "connectingToPLC": "Verbinde mit SPS...",
+    "signalsFound": "{{count}} Signale gefunden",
+    "aiMapping": "KI-Zuordnung: {{group}}",
+    "aiStarting": "Startet...",
+    "aiProgress": "{{mapped}} zugeordnet | Paket {{progress}}/{{total}}"
+  },
+  "signals": {
+    "noSignals": "Keine Signale gefunden. Laden Sie eine Projektdatei hoch oder starten Sie einen Live-Scan.",
+    "filterPlaceholder": "Signale filtern...",
+    "plcVariables": "SPS-Variablen",
+    "opcuaOutput": "OPC UA Ausgabewerte",
+    "filterSDM": "Nach Name, Typ oder Beschreibung filtern...",
+    "live": "live",
+    "panelTitle": "Standard-Datenmodell",
+    "noDataModel": "Kein Datenmodell definiert. Klicken Sie auf \"Standard-Datenmodell\" in der Seitenleiste."
+  },
+  "mapping": {
+    "dragHint": "Signal hierher ziehen oder",
+    "buildExpression": "Ausdruck erstellen",
+    "edit": "bearbeiten",
+    "remove": "entfernen",
+    "validated": "validiert",
+    "aiReasoning": "KI: {{text}}",
+    "minConfidence": "Min. Konfidenz: {{value}}%"
+  },
+  "modal": {
+    "addTitle": "Maschine hinzufügen",
+    "editTitle": "Maschine bearbeiten",
+    "machineName": "Maschinenname",
+    "machineNamePlaceholder": "z.B. Spritzguss Linie 1",
+    "plcType": "SPS-Typ",
+    "ipAddress": "IP-Adresse",
+    "rack": "Rack",
+    "slot": "Steckplatz",
+    "opcuaToggle": "OPC UA verwenden (Aktivierung im TIA Portal erforderlich)",
+    "projectFile": "Projektdatei",
+    "optional": "(optional)",
+    "clickToSelect": "Klicken zum Auswählen",
+    "format": "Format:",
+    "removeFile": "Datei entfernen",
+    "addScan": "Hinzufügen & Scannen",
+    "saveChanges": "Änderungen speichern",
+    "addMachine": "Maschine hinzufügen",
+    "cancel": "Abbrechen",
+    "saving": "Wird gespeichert...",
+    "failed": "Fehler: ",
+    "liveScanHint": {
+      "rockwell": "Signale werden automatisch per EtherNet/IP von der SPS gelesen.",
+      "s7": "Signale werden automatisch per {{protocol}} von der SPS gelesen.",
+      "opcuaNote": " OPC UA muss in der CPU aktiviert sein.",
+      "afterAdd": "Nach dem Anlegen wird ein Live-Scan gestartet."
+    }
+  },
+  "dataModel": {
+    "title": "Standard-Datenmodell",
+    "importJson": "JSON importieren",
+    "exportJson": "JSON exportieren",
+    "nameCol": "Name",
+    "typeCol": "Typ",
+    "unitCol": "Einheit",
+    "descriptionCol": "Beschreibung",
+    "addSignal": "+ Signal hinzufügen",
+    "save": "Datenmodell speichern",
+    "cancel": "Abbrechen",
+    "saving": "Wird gespeichert...",
+    "invalidJson": "Ungültige JSON-Datei",
+    "saveFailed": "Speichern fehlgeschlagen: "
+  },
+  "expression": {
+    "sourceLabel": "Quelladresse:",
+    "expressionLabel": "Ausdruck:",
+    "signalNotFound": "Signal nicht in der Liste gefunden",
+    "directPlaceholder": "DB10.DBD0 oder I1000.7",
+    "expressionPlaceholder": "DB10.DBX4.0 AND DB10.DBD0 > 100",
+    "lookupComingSoon": "Lookup-Tabellen-Editor folgt. Bitte vorerst den Ausdruckstyp verwenden.",
+    "save": "Zuordnung speichern",
+    "cancel": "Abbrechen"
+  },
+  "lang": {
+    "en": "English",
+    "de": "Deutsch",
+    "es": "Español",
+    "ro": "Română",
+    "hu": "Magyar",
+    "zh": "中文",
+    "pt-BR": "Português BR"
+  }
+}

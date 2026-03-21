@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-collector
+  labels:
+    {{- include "ct-gate.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.collector.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ct-gate.selectorLabels" (dict "component" "collector" "Release" .Release) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ct-gate.selectorLabels" (dict "component" "collector" "Release" .Release) | nindent 8 }}
+    spec:
+      containers:
+        - name: collector
+          image: {{ .Values.collector.image.repository }}:{{ .Values.collector.image.tag }}
+          imagePullPolicy: {{ .Values.collector.image.pullPolicy }}
+          env:
+            - name: BACKEND_URL
+              value: "http://{{ .Release.Name }}-backend:{{ .Values.backend.port }}"
+            - name: POLL_INTERVAL_MS
+              value: {{ .Values.collector.env.POLL_INTERVAL_MS | quote }}
+            - name: MQTT_BROKER
+              value: {{ .Values.collector.env.MQTT_BROKER | quote }}
+            - name: MQTT_TOPIC_PREFIX
+              value: {{ .Values.collector.env.MQTT_TOPIC_PREFIX | quote }}
+          resources:
+            {{- toYaml .Values.collector.resources | nindent 12 }}

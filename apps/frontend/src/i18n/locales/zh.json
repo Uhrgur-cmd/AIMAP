@@ -1,0 +1,121 @@
+{
+  "sidebar": {
+    "subtitle": "PLC信号映射",
+    "machines": "机器",
+    "addButton": "+ 添加",
+    "dataModel": "标准数据模型",
+    "opcuaValues": "OPC UA 数值",
+    "noMachines": "尚未添加机器。"
+  },
+  "app": {
+    "welcome": {
+      "subtitle": "PLC信号映射平台",
+      "instructions": "选择一台机器或添加新机器以开始使用。"
+    }
+  },
+  "topbar": {
+    "uploadProject": "上传项目",
+    "uploading": "上传中...",
+    "liveScan": "实时扫描",
+    "connecting": "连接中...",
+    "dbLabel": "DB",
+    "aiSuggest": "AI建议",
+    "aiRunning": "AI运行中...",
+    "liveConfirmed": "{{count}} 个实时确认",
+    "aiConfirmReplace": "警告：存在 {{count}} 个映射。\n\nAI建议将用新建议替换所有现有映射。\n继续？",
+    "aiError": "AI错误: {{error}}",
+    "uploadStep1": "正在读取项目文件...",
+    "uploadStep2": "正在解析信号和块...",
+    "uploadStep3": "正在验证实时PLC...",
+    "uploadStep4": "正在保存到数据库..."
+  },
+  "scan": {
+    "scanningDb": "正在扫描 DB {{db}}/{{total}}...",
+    "connectingToPLC": "正在连接PLC...",
+    "signalsFound": "找到 {{count}} 个信号",
+    "aiMapping": "AI映射: {{group}}",
+    "aiStarting": "启动中...",
+    "aiProgress": "已映射 {{mapped}} | 批次 {{progress}}/{{total}}"
+  },
+  "signals": {
+    "noSignals": "未找到信号。请上传项目文件或运行实时扫描。",
+    "filterPlaceholder": "过滤信号...",
+    "plcVariables": "PLC变量",
+    "opcuaOutput": "OPC UA 输出值",
+    "filterSDM": "按名称、类型或描述筛选...",
+    "live": "实时",
+    "panelTitle": "标准数据模型",
+    "noDataModel": "未定义数据模型。请点击侧边栏中的\"标准数据模型\"。"
+  },
+  "mapping": {
+    "dragHint": "将信号拖到此处或",
+    "buildExpression": "构建表达式",
+    "edit": "编辑",
+    "remove": "删除",
+    "validated": "已验证",
+    "aiReasoning": "AI: {{text}}",
+    "minConfidence": "最低置信度: {{value}}%"
+  },
+  "modal": {
+    "addTitle": "添加机器",
+    "editTitle": "编辑机器",
+    "machineName": "机器名称",
+    "machineNamePlaceholder": "例如 注塑生产线 1",
+    "plcType": "PLC类型",
+    "ipAddress": "IP地址",
+    "rack": "机架",
+    "slot": "插槽",
+    "opcuaToggle": "使用OPC UA（需要在TIA Portal中激活）",
+    "projectFile": "项目文件",
+    "optional": "（可选）",
+    "clickToSelect": "点击选择文件",
+    "format": "格式：",
+    "removeFile": "删除文件",
+    "addScan": "添加并扫描",
+    "saveChanges": "保存更改",
+    "addMachine": "添加机器",
+    "cancel": "取消",
+    "saving": "保存中...",
+    "failed": "失败: ",
+    "liveScanHint": {
+      "rockwell": "信号将通过EtherNet/IP从PLC自动读取。",
+      "s7": "信号将通过{{protocol}}从PLC自动读取。",
+      "opcuaNote": " 需要在CPU中启用OPC UA。",
+      "afterAdd": "添加后将启动实时扫描。"
+    }
+  },
+  "dataModel": {
+    "title": "标准数据模型",
+    "importJson": "导入JSON",
+    "exportJson": "导出JSON",
+    "nameCol": "名称",
+    "typeCol": "类型",
+    "unitCol": "单位",
+    "descriptionCol": "描述",
+    "addSignal": "+ 添加信号",
+    "save": "保存数据模型",
+    "cancel": "取消",
+    "saving": "保存中...",
+    "invalidJson": "无效的JSON文件",
+    "saveFailed": "保存失败: "
+  },
+  "expression": {
+    "sourceLabel": "源地址：",
+    "expressionLabel": "表达式：",
+    "signalNotFound": "在列表中未找到信号",
+    "directPlaceholder": "DB10.DBD0 或 I1000.7",
+    "expressionPlaceholder": "DB10.DBX4.0 AND DB10.DBD0 > 100",
+    "lookupComingSoon": "查找表编辑器即将推出。请暂时使用表达式类型。",
+    "save": "保存映射",
+    "cancel": "取消"
+  },
+  "lang": {
+    "en": "English",
+    "de": "Deutsch",
+    "es": "Español",
+    "ro": "Română",
+    "hu": "Magyar",
+    "zh": "中文",
+    "pt-BR": "Português BR"
+  }
+}
