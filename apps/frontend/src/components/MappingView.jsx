@@ -242,8 +242,22 @@ export default function MappingView({ machine, onRefresh, dataModelVersion = 0 }
               className="w-full bg-white text-gray-900 text-sm rounded-md px-3 py-1.5 border border-gray-200 focus:border-signal-blue focus:ring-1 focus:ring-signal-blue/20 outline-none placeholder:text-gray-400" />
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1 bg-gray-50/50">
-            {filteredSignals.length === 0 && (
-              <p className="text-gray-400 text-sm text-center py-8">{t('signals.noSignals')}</p>
+            {signals.length === 0 && !uploading && !scanning && (
+              <div className="space-y-2 py-4">
+                {[1,2,3,4,5].map(i => (
+                  <div key={i} className="p-2 rounded-md border border-gray-100 animate-pulse">
+                    <div className="flex items-center gap-2">
+                      <div className="h-3 w-24 bg-gray-200 rounded"></div>
+                      <div className="h-3 w-12 bg-gray-100 rounded ml-auto"></div>
+                    </div>
+                    <div className="h-2.5 w-32 bg-gray-100 rounded mt-1.5"></div>
+                  </div>
+                ))}
+                <p className="text-gray-400 text-xs text-center pt-2">{t('signals.noSignals')}</p>
+              </div>
+            )}
+            {signals.length > 0 && filteredSignals.length === 0 && (
+              <p className="text-gray-400 text-sm text-center py-8">No signals match filter</p>
             )}
             {filteredSignals.map(signal => {
               const isMapped = mappedAddressSet.has(signal.address);
@@ -456,6 +470,25 @@ export default function MappingView({ machine, onRefresh, dataModelVersion = 0 }
               );
             })}
           </div>
+        </div>
+      </div>
+
+      {/* ── Status Bar ──────────────────────────────────── */}
+      <div className="flex items-center justify-between px-4 py-1.5 border-t border-gray-200 bg-surface text-[10px] text-gray-400 flex-shrink-0">
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-1.5">
+            <span className={`w-1.5 h-1.5 rounded-full ${machine.status === 'connected' ? 'bg-emerald-400' : 'bg-gray-300'}`}></span>
+            {machine.status || 'unknown'}
+          </span>
+          <span>{signals.length} signals</span>
+          <span>{mappings.length} / {dataModel.signals?.length || 0} mapped</span>
+          {confirmedCount > 0 && <span className="text-emerald-600">{confirmedCount} live confirmed</span>}
+        </div>
+        <div className="flex items-center gap-4">
+          {machine.project_last_parsed && (
+            <span>Parsed: {new Date(machine.project_last_parsed).toLocaleDateString()}</span>
+          )}
+          <span className="font-mono">{machine.plc_type} · {machine.host}</span>
         </div>
       </div>
     </div>

@@ -71,28 +71,64 @@ async function runPhase1(provider, machineId, signalContext, targets, onProgress
 
     const list = batch.map(t => `"${t.name}" [${t.data_type}${t.unit ? ', ' + t.unit : ''}]: ${t.description || ''}`).join('\n');
 
-    const prompt = `Du bist ein erfahrener SPS-Ingenieur. Finde für jedes Ziel-Signal das passende PLC-Signal.
+    const prompt = `Du bist ein erfahrener SPS-Programmierer der eine Extrusionslinie / Produktionsmaschine analysiert.
+Deine Aufgabe: Finde für jedes Ziel-Signal das RICHTIGE PLC-Signal oder die richtige EXPRESSION.
 
 ZIEL-SIGNALE (${batch.length}):
 ${list}
 
-CTBASE MAPPING-REGELN:
+CTBASE MAPPING-REGELN (beschreiben was jedes Signal BEDEUTET):
 ${CTBASE_RULES}
 
-ANALYSIERTES SPS-PROGRAMM:
+ANALYSIERTES SPS-PROGRAMM (Signale mit Dependency Trees):
 ${signalContext}
 
-REGELN:
-1. DATENTYPEN MÜSSEN PASSEN: BOOL→BOOL/expression, INT→INT/WORD, REAL→REAL
-2. Nutze Abhängigkeiten (← [...]) um zu verstehen was ein Signal WIRKLICH tut
-3. Bei mehreren gleichartigen Signalen (z.B. Schutztüren): OR-Verknüpfung als "expression"
-4. Wenn NICHTS passt → WEGLASSEN. Nicht raten!
-5. Verwende exakte PLC-Adressen (z.B. DB15.DBX0.3, DB49.DBX143.0)
+═══ KRITISCHE ANALYSE-REGELN ═══
 
-JSON Array:
-[{"target":"Name","source":"Adresse","type":"direct","confidence":0.9,"reason":"Begründung"}]
-oder [{"target":"Name","expression":"DB15.DBX0.3 OR DB15.DBX10.3","type":"expression","confidence":0.9,"reason":"..."}]
-oder []`;
+1. DEPENDENCY TREES LESEN – nicht nur Namen matchen!
+   Jedes Signal hat "← [dependencies]" die zeigen WOHER der Wert kommt.
+   Beispiel: DB321.DBX0.5 AUTO_ON ← [DB300.DBX0.4(BUTT_LINE_ON), DB300.DBX0.0(Control_ON)]
+   → Das sagt dir: AUTO_ON wird von FB300 (Liniensteuerung) gesetzt, abhängig von Taste LINE_ON.
+
+2. PRODUCING ≠ AUTOMATIC MODE!
+   "Automatic" heißt nur: Betriebsart ist Automatik gewählt.
+   "Producing" heißt: Maschine PRODUZIERT TATSÄCHLICH – Antriebe drehen, Material läuft.
+   → Suche ein Signal das abhängt von Automatik UND Geschwindigkeit > 0 oder Antrieb läuft.
+   → Typisch: expression aus Auto-Bit AND Speed > 0 AND NOT Fehler
+
+3. MEHRFACH-SIGNALE mit OR VERKNÜPFEN!
+   Wenn du mehrere Signale mit dem GLEICHEN Namen findest (z.B. 3x "Schutztueren_zu"):
+   → Das sind verschiedene Schutztüren an verschiedenen Stationen!
+   → Verknüpfe sie mit OR (bei Fehler/Störung) oder AND (bei Freigabe/Türen zu)
+   → Für ProtectiveDevice: NOT Tuer1 OR NOT Tuer2 OR NOT Tuer3 (jede offene Tür triggert)
+
+4. FB-HIERARCHIE BEACHTEN!
+   FBs die von anderen FBs aufgerufen werden haben oft die GENAUEREN Signale:
+   → FB300 (Liniensteuerung) hat Linien-AUTO/PULL → besser als FB120 (Betriebsarten)
+   → FB321 (Raupe) hat Liniengeschwindigkeit → zeigt ob tatsächlich produziert wird
+   → FB3500 (Safety) hat CONTROL_ON → berechnet aus allen Antrieb-Safety-Inputs
+
+5. GESCHWINDIGKEIT > 0 = PRODUZIERT!
+   Wenn ein Signal "Liniengeschwindigkeit" oder "Speed" oder "Drehzahl" als REAL vorhanden ist:
+   → Geschwindigkeit > 0 ist der BESTE Indikator für "Maschine produziert"
+   → Nutze es in einer expression: AutoBit AND SpeedSignal > 0
+
+6. EXPRESSIONS MÜSSEN SCL-SYNTAX HABEN mit Semikolon am Ende!
+   Direct: "DB10.DBX4.0;"
+   Expression: "DB321.DBX0.5 AND DB331.DBD2 > 0 AND NOT DB2.DBX0.1;"
+   Operatoren: AND, OR, NOT, >, <, >=, <=, ==, !=, +, -, *, /
+
+7. WENN NICHTS PASST → WEGLASSEN!
+   Lieber kein Mapping als ein falsches. Nicht raten!
+   Confidence < 0.5 → besser weglassen.
+
+═══ JSON OUTPUT FORMAT ═══
+Antworte NUR mit einem JSON Array. Jedes Element:
+[
+  {"target":"Signal.Name","source":"DB10.DBX4.0;","type":"direct","confidence":0.95,"reason":"Kurze Begründung"},
+  {"target":"Signal.Name","expression":"DB321.DBX0.5 AND DB331.DBD2 > 0;","type":"expression","confidence":0.9,"reason":"..."}
+]
+Oder [] wenn nichts passt.`;
 
     try {
       console.log(`P1 ${bi + 1}/${batches.length}`);
@@ -127,10 +163,11 @@ async function runPhase2(provider, machineId, signalContext, stringTargets, phas
   const p1Summary = phase1Results.map(m => `${m.target_signal} = ${m.source_address || m.expression || '?'}`).join('\n');
   const list = stringTargets.map(t => `"${t.name}" [STRING]: ${t.description || ''}`).join('\n');
 
-  const prompt = `Du bist ein SPS-Ingenieur. Erstelle LOOKUP-Tabellen für STRING-Ziel-Signale.
+  const prompt = `Du bist ein erfahrener SPS-Programmierer. Erstelle IF/THEN Lookup-Ausdrücke für STRING-Ziel-Signale.
 
 BEREITS GEMAPPTE SIGNALE (Phase 1 – verwende diese PLC-Adressen in den Bedingungen!):
 ${p1Summary}
+WICHTIG: Nutze die Phase-1-Adressen! Wenn ErrorActive = "DB107.DBX0.1 OR DB109.DBX0.1", dann schreibe genau diese Adressen in die IF-Bedingungen.
 
 STRING ZIEL-SIGNALE:
 ${list}

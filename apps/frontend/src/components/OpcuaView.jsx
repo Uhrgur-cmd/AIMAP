@@ -16,7 +16,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 // ─── helpers ──────────────────────────────────────────────────
 
 function formatValue(value) {
-  if (value === null || value === undefined) return { text: '—', cls: 'text-neutral-600' };
+  if (value === null || value === undefined) return { text: '—', cls: 'text-gray-500' };
   if (typeof value === 'boolean') {
     return value
       ? { text: 'TRUE',  cls: 'text-emerald-600' }
@@ -59,7 +59,7 @@ function CopyButton({ text }) {
       className={`flex-shrink-0 font-mono text-[10px] px-2 py-0.5 rounded border transition-all duration-150 ${
         state === 'copied'
           ? 'text-emerald-600 border-green-700/60 bg-emerald-50'
-          : 'text-neutral-500 border-gray-300 bg-gray-50/60 hover:text-signal-blue hover:border-ct-gold/40 opacity-0 group-hover:opacity-100'
+          : 'text-gray-500 border-gray-300 bg-gray-50/60 hover:text-signal-blue hover:border-signal-blue/40 opacity-0 group-hover:opacity-100'
       }`}
     >
       {state === 'copied' ? '✓ copied' : 'copy NodeId'}
@@ -102,7 +102,7 @@ function CategoryBlock({ category, signals, liveValues, machineId }) {
         <span className="text-signal-blue text-xs font-semibold">
           {category === '_ungrouped_' ? '(ungrouped)' : category}
         </span>
-        <span className="ml-auto text-[10px] text-neutral-600">{signals.length}</span>
+        <span className="ml-auto text-[10px] text-gray-500">{signals.length}</span>
       </button>
 
       {open && (
@@ -236,15 +236,15 @@ export default function OpcuaView({ onBack }) {
 
   // ─── render ───────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-screen bg-neutral-950 text-gray-900">
+    <div className="flex flex-col h-screen bg-white text-gray-900">
 
       {/* ── Top bar ── */}
-      <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-gray-200 flex-shrink-0">
+      <div className="flex items-center justify-between px-5 py-3 bg-[#2A2A36] border-b border-gray-200 flex-shrink-0">
         <div className="flex items-center gap-4">
           <img src="/ct-gate-logo.svg" alt="CT Gate" className="h-9" onError={e => { e.target.style.display='none'; }} />
           <div>
-            <h1 className="text-sm font-bold text-gray-900 tracking-wide">OPC UA Explorer</h1>
-            <p className="text-[10px] text-neutral-500 font-mono mt-0.5">
+            <h1 className="text-sm font-bold text-white tracking-wide">OPC UA Explorer</h1>
+            <p className="text-[10px] text-white/40 font-mono mt-0.5">
               opc.tcp://&lt;host&gt;:4840/UA/CTGate &nbsp;·&nbsp; NodeId: ns=2;s=&lt;Machine&gt;.&lt;Category&gt;.&lt;Signal&gt;
             </p>
           </div>
@@ -257,12 +257,12 @@ export default function OpcuaView({ onBack }) {
               {liveCount} live stream{liveCount > 1 ? 's' : ''}
             </span>
           )}
-          <span className="text-xs text-neutral-600">
+          <span className="text-xs text-white/50">
             {structure.length} machine{structure.length !== 1 ? 's' : ''}
           </span>
           <button
             onClick={onBack}
-            className="text-xs bg-gray-50 hover:bg-gray-100 text-gray-900 px-3 py-1.5 rounded border border-gray-300 hover:border-gray-300 transition-colors"
+            className="text-xs bg-white/10 hover:bg-white/20 text-white/80 px-3 py-1.5 rounded border border-white/20 hover:border-white/30 transition-colors"
           >
             ← Back
           </button>
@@ -273,21 +273,21 @@ export default function OpcuaView({ onBack }) {
       <div className="flex-1 overflow-y-auto p-4 space-y-2">
 
         {loading && (
-          <div className="text-center py-16 text-neutral-500 text-sm">Loading address space...</div>
+          <div className="text-center py-16 text-gray-500 text-sm">Loading address space...</div>
         )}
 
         {error && (
           <div className="text-center py-16 text-red-400 text-sm">
             <p>Could not load OPC UA structure.</p>
-            <p className="text-xs mt-2 text-neutral-600">{error}</p>
-            <p className="text-xs mt-1 text-neutral-600">Make sure the opcua-server container is running.</p>
+            <p className="text-xs mt-2 text-gray-500">{error}</p>
+            <p className="text-xs mt-1 text-gray-500">Make sure the opcua-server container is running.</p>
           </div>
         )}
 
         {!loading && !error && structure.length === 0 && (
-          <div className="text-center py-16 text-neutral-500 text-sm">
+          <div className="text-center py-16 text-gray-500 text-sm">
             <p>No OPC UA nodes available.</p>
-            <p className="text-xs mt-2 text-neutral-600">Add machines and configure mappings to populate the address space.</p>
+            <p className="text-xs mt-2 text-gray-500">Add machines and configure mappings to populate the address space.</p>
           </div>
         )}
 
@@ -318,14 +318,14 @@ export default function OpcuaView({ onBack }) {
                   machine.status === 'connected'    ? 'bg-green-400' :
                   machine.status === 'connecting'   ? 'bg-yellow-400 animate-pulse' :
                   machine.status === 'disconnected' ? 'bg-red-400' :
-                  machine.status === 'error'        ? 'bg-red-400' : 'bg-neutral-600'
+                  machine.status === 'error'        ? 'bg-red-400' : 'bg-gray-400'
                 }`} />
 
                 {/* machine name */}
                 <span className="font-semibold text-sm text-gray-900">{machine.name}</span>
 
                 {/* safe name (NodeId hint) */}
-                <span className="text-[10px] text-neutral-600 font-mono">{machine.nodeId}</span>
+                <span className="text-[10px] text-gray-500 font-mono">{machine.nodeId}</span>
 
                 {/* right side */}
                 <div className="ml-auto flex items-center gap-3">
@@ -341,7 +341,7 @@ export default function OpcuaView({ onBack }) {
                   {status === 'error' && (
                     <span className="text-[10px] text-red-400">stream error</span>
                   )}
-                  <span className="text-[10px] text-neutral-600">
+                  <span className="text-[10px] text-gray-500">
                     {machine.signals.length} signal{machine.signals.length !== 1 ? 's' : ''}
                   </span>
                 </div>
@@ -351,7 +351,7 @@ export default function OpcuaView({ onBack }) {
               {isExpanded && (
                 <div className="p-3 bg-white/50 border-t border-gray-200/60 space-y-1">
                   {machine.signals.length === 0 ? (
-                    <p className="text-xs text-neutral-600 text-center py-4">
+                    <p className="text-xs text-gray-500 text-center py-4">
                       No mappings configured for this machine.
                     </p>
                   ) : (
@@ -374,10 +374,10 @@ export default function OpcuaView({ onBack }) {
 
       {/* ── Footer info bar ── */}
       <div className="flex-shrink-0 px-5 py-2 bg-white border-t border-gray-200 flex items-center justify-between">
-        <span className="text-[10px] text-neutral-600">
+        <span className="text-[10px] text-gray-500">
           Expand a machine to start live streaming · Collapse or leave page to stop
         </span>
-        <span className="text-[10px] text-neutral-600 font-mono">
+        <span className="text-[10px] text-gray-500 font-mono">
           Refresh interval: {(parseInt(5000) / 1000).toFixed(0)}s
         </span>
       </div>

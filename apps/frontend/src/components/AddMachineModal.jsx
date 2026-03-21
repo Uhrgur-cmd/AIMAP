@@ -71,7 +71,7 @@ export default function AddMachineModal({ machine, onSubmit, onClose, onUpload }
   const protocol = form.use_opcua ? 'OPC UA' : 'S7';
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={onClose}>
+    <div className="modal-overlay" onClick={onClose}>
       <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 border border-gray-200" onClick={e => e.stopPropagation()}>
         <h2 className="text-lg font-bold text-gray-900 mb-4">
           {isEdit ? t('modal.editTitle') : t('modal.addTitle')}
@@ -146,7 +146,7 @@ export default function AddMachineModal({ machine, onSubmit, onClose, onUpload }
                 {t('modal.projectFile')} <span className="text-neutral-600">{t('modal.optional')}</span>
               </label>
               <div
-                className="border border-dashed border-gray-300 rounded p-3 text-center cursor-pointer hover:border-ct-gold hover:bg-gray-50/30 transition-colors"
+                className="border border-dashed border-gray-300 rounded p-3 text-center cursor-pointer hover:border-signal-blue hover:bg-gray-50/30 transition-colors"
                 onClick={() => fileInputRef.current?.click()}
               >
                 <input
@@ -181,7 +181,7 @@ export default function AddMachineModal({ machine, onSubmit, onClose, onUpload }
           )}
 
           {showLiveScanHint && (
-            <div className="bg-signal-blue/10 border border-ct-gold/30 rounded p-3 text-xs text-signal-blue">
+            <div className="bg-signal-blue/10 border border-signal-blue/30 rounded p-3 text-xs text-signal-blue">
               {form.plc_type === 'Rockwell'
                 ? t('modal.liveScanHint.rockwell')
                 : t('modal.liveScanHint.s7', { protocol }) +

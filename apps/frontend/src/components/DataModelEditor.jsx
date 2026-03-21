@@ -112,7 +112,7 @@ export default function DataModelEditor({ onClose, onSaved, machines = [] }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={onClose}>
+    <div className="modal-overlay" onClick={onClose}>
       <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col border border-gray-200" onClick={e => e.stopPropagation()}>
 
         {/* Header */}
@@ -190,7 +190,7 @@ export default function DataModelEditor({ onClose, onSaved, machines = [] }) {
                   key={m.id}
                   className={`flex items-center gap-1.5 px-2 py-1 rounded border cursor-pointer text-xs transition-colors ${
                     selectedMachineIds.has(m.id)
-                      ? 'border-ct-gold/60 bg-signal-blue/10 text-gray-900'
+                      ? 'border-signal-blue/60 bg-signal-blue/10 text-gray-900'
                       : 'border-gray-300 bg-gray-50 text-neutral-400'
                   }`}
                 >

@@ -117,10 +117,10 @@ export default function App() {
         {selectedMachine ? (
           <MappingView key={selectedMachine?.id} machine={selectedMachine} onRefresh={loadMachines} dataModelVersion={dataModelVersion} />
         ) : (
-          <div className="flex items-center justify-center h-full text-ct-silver">
+          <div className="flex items-center justify-center h-full text-gray-500">
             <div className="text-center">
               <h2 className="text-2xl font-bold mb-2 text-gray-900">CT-Gate</h2>
-              <p className="text-ct-silver">{t('app.welcome.subtitle')}</p>
+              <p className="text-gray-500">{t('app.welcome.subtitle')}</p>
               <p className="mt-4 text-sm">{t('app.welcome.instructions')}</p>
             </div>
           </div>
