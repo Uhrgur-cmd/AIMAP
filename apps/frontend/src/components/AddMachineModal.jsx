@@ -14,6 +14,8 @@ const DEFAULT_SLOTS = {
 const FILE_HINTS = {
   'S7-300': { accept: '.s7p,.zip', label: '.s7p / .zip (Step7 Projekt)' },
   'S7-400': { accept: '.s7p,.zip', label: '.s7p / .zip (Step7 Projekt)' },
+  'S7-1200': { accept: '.zip', label: '.zip (TIA Portal XML Export)' },
+  'S7-1500': { accept: '.zip', label: '.zip (TIA Portal XML Export)' },
   'Rockwell': { accept: '.l5x', label: '.L5X (Studio 5000 Export)' }
 };
 
@@ -65,7 +67,7 @@ export default function AddMachineModal({ machine, onSubmit, onClose, onUpload }
 
   const showRackSlot = form.plc_type !== 'Rockwell';
   const showOpcua = form.plc_type === 'S7-1200';
-  const showFileUpload = !LIVE_SCAN_TYPES.includes(form.plc_type);
+  const showFileUpload = !!FILE_HINTS[form.plc_type];
   const showLiveScanHint = LIVE_SCAN_TYPES.includes(form.plc_type);
   const fileHint = FILE_HINTS[form.plc_type];
   const protocol = form.use_opcua ? 'OPC UA' : 'S7';

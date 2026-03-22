@@ -1,7 +1,8 @@
 const http = require('http');
 const https = require('https');
 const pool = require('../db/pool');
-const { buildCrossReference } = require('./cross-reference');
+const { buildCrossReference, awlToReadable } = require('./cross-reference');
+const { buildProgramFlow, programFlowForPrompt } = require('./program-flow');
 const { CTBASE_RULES } = require('./ctbase-rules');
 
 const AI_PROVIDER = process.env.AI_PROVIDER || 'ollama';
@@ -21,7 +22,17 @@ async function suggestMappingsBatchwise(machineId, onProgress) {
   const { signalProfiles, stats } = await buildCrossReference(machineId);
   console.log(`Cross-ref: ${stats.totalSignals} signals, ${stats.withWriters} writers, ${stats.withDependencies} deps`);
 
-  const signalContext = buildCompactContext(signalProfiles);
+  // Build program flow (call hierarchy, machine behavior, sequences)
+  let programFlowText = '';
+  try {
+    const flowData = await buildProgramFlow(machineId);
+    programFlowText = programFlowForPrompt(flowData);
+    console.log(`Program flow: ${flowData.stats.totalBlocks} blocks, ${flowData.stats.totalCalls} calls, ${flowData.stats.sequenceSteps} steps`);
+  } catch (err) {
+    console.warn(`Program flow extraction skipped: ${err.message}`);
+  }
+
+  const signalContext = buildCompactContext(signalProfiles, programFlowText);
   console.log(`Context: ${signalContext.length} chars ≈ ${Math.round(signalContext.length / 4)} tokens`);
 
   const { rows: models } = await pool.query('SELECT * FROM datamodel ORDER BY created_at DESC LIMIT 1');
@@ -232,38 +243,76 @@ JSON Array oder []:`;
 // Context builder
 // ═══════════════════════════════════════════════════════════════
 
-function buildCompactContext(profiles) {
+function buildCompactContext(profiles, programFlowText) {
+  let text = '';
+
+  // Program flow first — gives AI the "big picture" before signal details
+  if (programFlowText) {
+    text += programFlowText + '\n\n';
+  }
+
+  // Build signal name lookup for AWL translation
+  const signalByAddr = {};
+  for (const p of profiles) {
+    if (p.address && p.name) signalByAddr[p.address.replace(/\s+/g, '')] = { name: p.name };
+  }
+
   const inNets = profiles.filter(p => p.writtenBy.length > 0 || p.readBy.length > 0);
   const withComments = profiles.filter(p =>
     p.writtenBy.length === 0 && p.readBy.length === 0 && p.comment && !p.comment.startsWith('[name:')
   );
 
-  let text = '';
   if (inNets.length > 0) {
     text += `--- SIGNALS WITH TRACED LOGIC (${inNets.length}) ---\n`;
+
+    // Show full logic for first 500 signals (most important, sorted by dependency count)
+    const MAX_LOGIC_SIGNALS = 500;
+    let logicCount = 0;
+
     for (const p of inNets) {
       text += `${p.address} [${p.data_type || '?'}]`;
       if (p.name) text += ` "${p.name}"`;
       if (p.comment && !p.comment.startsWith('[name:')) text += ` // ${p.comment}`;
-      if (p.dependsOn.length > 0) {
-        const deps = p.dependsOn.slice(0, 8).map(d => {
-          let s = d.address;
-          if (d.comment && !d.comment.startsWith('[name:') && !d.comment.startsWith('Written in')) {
-            s += '(' + d.comment.substring(0, 40) + ')';
+
+      if (p.writtenBy.length > 0) {
+        const w = p.writtenBy[0];
+        text += ` ← ${w.block}`;
+
+        // Show logic for the first MAX_LOGIC_SIGNALS signals
+        if (logicCount < MAX_LOGIC_SIGNALS && w.logic) {
+          const readable = awlToReadable(w.logic, signalByAddr);
+          if (readable && readable.length > 5) {
+            const logicPreview = readable.length > 200 ? readable.substring(0, 200) + '...' : readable;
+            text += `\n    LOGIC: ${logicPreview}`;
+            logicCount++;
           }
-          return s;
-        });
-        text += ` ← [${deps.join(', ')}]`;
-      } else if (p.writtenBy.length > 0) {
-        text += ` ← written by ${p.writtenBy[0].block}`;
+        }
+        // Show dependencies (compact, always)
+        if (p.dependsOn.length > 0) {
+          const deps = p.dependsOn.slice(0, 6).map(d => {
+            let s = d.address;
+            if (d.comment && !d.comment.startsWith('[name:') && !d.comment.startsWith('Written in'))
+              s += '(' + d.comment.substring(0, 30) + ')';
+            return s;
+          });
+          text += `\n    DEPENDS: [${deps.join(', ')}]`;
+        }
       }
       text += '\n';
     }
     text += '\n';
   }
+  // Only include signals that are referenced somewhere (read/written in networks)
+  // Signals that appear nowhere in the program logic are useless for mapping
   if (withComments.length > 0) {
-    text += `--- SIGNALS WITH COMMENTS (${withComments.length}) ---\n`;
-    for (const p of withComments) {
+    // Filter: keep only signals that are referenced in at least one network
+    // (they have a comment from the symbol table but no direct writer/reader traced)
+    // Limit to keep prompt size manageable — most important first (shorter names = more specific)
+    const MAX_COMMENT_SIGNALS = 2000;
+    const limited = withComments.slice(0, MAX_COMMENT_SIGNALS);
+    const skipped = withComments.length - limited.length;
+    text += `--- SIGNALS WITH COMMENTS (${limited.length}${skipped > 0 ? ', ' + skipped + ' more omitted' : ''}) ---\n`;
+    for (const p of limited) {
       text += `${p.address} [${p.data_type || '?'}]`;
       if (p.name) text += ` "${p.name}"`;
       if (p.comment) text += ` // ${p.comment}`;

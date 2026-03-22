@@ -41,12 +41,18 @@ async function buildCrossReference(machineId) {
   );
 
   // ─── S7-300/400 specific: Resolve indirect DIX/AR2 addresses ───
+  // Build signal lookup maps — by address AND by name (for TIA symbolic)
+  const signalByAddr = {};
+  const signalByName = {};
+  for (const s of signals) {
+    if (s.address) signalByAddr[normalizeAddr(s.address)] = s;
+    if (s.name) signalByName[s.name] = s;
+    // Also store block.name path (e.g. "DB_Safety.Emergency_Ok")
+    if (s.block_name && s.name) signalByName[s.block_name + '.' + s.name] = s;
+  }
+
   if (isS7Classic) {
     const fbToDb = buildFbToDbMapping(signals, networks);
-    const signalByAddr = {};
-    for (const s of signals) {
-      if (s.address) signalByAddr[normalizeAddr(s.address)] = s;
-    }
     resolveIndirectAddresses(networks, fbToDb, signalByAddr);
   }
 
@@ -56,9 +62,48 @@ async function buildCrossReference(machineId) {
   // ─── Pass 1b: Build address → writers/readers index from networks ───
   const { writers, readers } = buildSignalIndex(networks);
 
+  // ─── Pass 1b2: For TIA projects, resolve symbolic writer keys to DB addresses ───
+  // Writers may have symbolic keys like "System.Cycletime.last" that need to map to "DB100.DBD0"
+  // Use pre-built signalByName map for O(1) lookups instead of O(n) loops
+  const resolvedWriters = { ...writers };
+  const resolvedReaders = { ...readers };
+
+  function resolveSymbolicKeys(source, target) {
+    for (const key of Object.keys(source)) {
+      if (/^DB\d+\.DB|^[IQM]\d+/.test(key)) continue;
+      // Try direct name match
+      let sig = signalByName[key];
+      if (sig && sig.address && !target[sig.address]) {
+        target[sig.address] = source[key];
+        continue;
+      }
+      // Try partial match: "Drives.Timeout" → look for signal named "Timeout" in block "Drives"
+      const dotIdx = key.lastIndexOf('.');
+      if (dotIdx > 0) {
+        const varName = key.substring(dotIdx + 1);
+        const blockPrefix = key.substring(0, dotIdx);
+        // Try blockPrefix.varName
+        sig = signalByName[blockPrefix + '.' + varName];
+        if (sig && sig.address && !target[sig.address]) {
+          target[sig.address] = source[key];
+          continue;
+        }
+        // Try just varName (if unique enough, > 4 chars)
+        if (varName.length > 4) {
+          sig = signalByName[varName];
+          if (sig && sig.address && !target[sig.address]) {
+            target[sig.address] = source[key];
+          }
+        }
+      }
+    }
+  }
+  resolveSymbolicKeys(writers, resolvedWriters);
+  resolveSymbolicKeys(readers, resolvedReaders);
+
   // ─── Pass 1c: Build dependency trees ───
   const profiles = [];
-  const MAX_DEPTH = 5; // Prevent infinite recursion
+  const MAX_DEPTH = 5;
 
   for (const signal of signals) {
     const addr = signal.address;
@@ -78,7 +123,7 @@ async function buildCrossReference(machineId) {
 
     // Find all networks that WRITE this signal
     const addrNorm = normalizeAddr(addr);
-    const writerNets = writers[addrNorm] || [];
+    const writerNets = resolvedWriters[addrNorm] || writers[addrNorm] || [];
     for (const net of writerNets) {
       profile.writtenBy.push({
         block: net.block_name,
@@ -98,13 +143,13 @@ async function buildCrossReference(machineId) {
       });
     }
 
-    // Build dependency tree: what inputs does this signal depend on?
-    const visited = new Set();
-    profile.dependencyTree = buildDependencyTree(addrNorm, writers, commentLookup, visited, 0, MAX_DEPTH);
-
-    // Flatten dependencies for quick access
-    if (profile.dependencyTree) {
-      flattenDependencies(profile.dependencyTree, profile.dependsOn, commentLookup);
+    // Build dependency tree ONLY for signals that have writers (performance: skip the 90% without)
+    if (writerNets.length > 0) {
+      const visited = new Set();
+      profile.dependencyTree = buildDependencyTree(addrNorm, resolvedWriters, commentLookup, visited, 0, MAX_DEPTH);
+      if (profile.dependencyTree) {
+        flattenDependencies(profile.dependencyTree, profile.dependsOn, commentLookup);
+      }
     }
 
     profiles.push(profile);
@@ -196,15 +241,30 @@ function buildCommentLookup(signals, networks) {
       }
     }
 
-    // Any network with logic field
+    // Any network with logic field — handle both DB addresses AND symbolic names
     if (net.logic && net.block_name) {
-      // Find := assignments in SCL logic
-      const assigns = net.logic.match(/(\S+)\s*:=/g);
+      // Find := assignments in SCL/LAD logic
+      const assigns = net.logic.match(/([\w.]+)\s*:=/g);
       if (assigns) {
         for (const a of assigns) {
-          const addr = normalizeAddr(a.replace(/\s*:=$/, ''));
+          const raw = a.replace(/\s*:=$/, '').trim();
+          // Try as DB address first
+          const addr = normalizeAddr(raw);
           if (addr && addr.length > 2 && !lookup[addr]) {
             lookup[addr] = `Written in ${net.block_name}`;
+          }
+          // Also store symbolic name (for TIA projects)
+          if (raw && raw.length > 1 && !lookup[raw]) {
+            lookup[raw] = `Written in ${net.block_name} (SCL)`;
+          }
+        }
+      }
+
+      // Also extract all variable references from signals_referenced
+      if (net.signals_referenced && Array.isArray(net.signals_referenced)) {
+        for (const ref of net.signals_referenced) {
+          if (ref && !lookup[ref]) {
+            lookup[ref] = `Referenced in ${net.block_name}`;
           }
         }
       }
@@ -347,10 +407,14 @@ function buildDependencyTree(addr, writers, commentLookup, visited, depth, maxDe
     inputAddrs = net.signals_referenced.map(r => normalizeAddr(r)).filter(Boolean);
   }
 
-  // Recurse into each input
+  // Limit inputs to prevent combinatorial explosion (max 12 per network)
+  if (inputAddrs.length > 12) inputAddrs = inputAddrs.slice(0, 12);
+
+  // Recurse into each input (but only 1 level deep for large sets)
+  const effectiveMaxDepth = inputAddrs.length > 8 ? Math.min(maxDepth, 2) : maxDepth;
   for (const inputAddr of inputAddrs) {
-    if (inputAddr === addr) continue; // Skip self-reference
-    const child = buildDependencyTree(inputAddr, writers, commentLookup, new Set(visited), depth + 1, maxDepth);
+    if (inputAddr === addr) continue;
+    const child = buildDependencyTree(inputAddr, writers, commentLookup, new Set(visited), depth + 1, effectiveMaxDepth);
     if (child) {
       node.inputs.push(child);
     }
@@ -576,4 +640,211 @@ function resolveIndirectAddresses(networks, fbToDb, signalByAddr) {
   }
 }
 
-module.exports = { buildCrossReference, buildEnrichedContext, profileToText };
+/**
+ * Translate raw AWL logic into a readable boolean/arithmetic expression.
+ * "O I 192.0; O I 544.0; = DIX 0.4" → "I192.0 OR I544.0"
+ * "A M 0.0; AN M 1.0; = Q 2.0" → "M0.0 AND NOT M1.0"
+ * "L DBW 10; L 100; >I; = M 0.0" → "DBW10 > 100"
+ */
+function awlToReadable(awlLogic, signalByAddr) {
+  if (!awlLogic) return null;
+
+  // If it's already SCL, clean it up
+  if (awlLogic.startsWith('SCL:')) {
+    return cleanSCL(awlLogic.substring(4).trim());
+  }
+  if (awlLogic.startsWith('LAD:')) {
+    return awlLogic.substring(4).trim();
+  }
+
+  const parts = awlLogic.split(';').map(s => s.trim()).filter(Boolean);
+  const stack = []; // expression stack
+  let akku1 = null;
+  let akku2 = null;
+  let result = [];
+
+  for (const part of parts) {
+    const tokens = part.split(/\s+/);
+    const op = tokens[0];
+    const operand = tokens.slice(1).join(' ').replace(/\s+/g, '');
+
+    // Resolve operand name
+    const named = resolveOperandName(operand, signalByAddr);
+
+    switch (op) {
+      // Bit logic
+      case 'A':  stack.push(named); break;
+      case 'AN': stack.push(`NOT ${named}`); break;
+      case 'O':
+        if (operand) {
+          if (stack.length > 0) {
+            const prev = stack.pop();
+            stack.push(`${prev} OR ${named}`);
+          } else {
+            stack.push(named);
+          }
+        }
+        break;
+      case 'ON':
+        if (operand) {
+          if (stack.length > 0) {
+            const prev = stack.pop();
+            stack.push(`${prev} OR NOT ${named}`);
+          } else {
+            stack.push(`NOT ${named}`);
+          }
+        }
+        break;
+      case 'X':  stack.push(`${named} XOR`); break;
+      case 'XN': stack.push(`NOT ${named} XOR`); break;
+      case 'NOT': {
+        const top = stack.pop();
+        stack.push(top ? `NOT (${top})` : 'NOT');
+        break;
+      }
+
+      // Brackets
+      case 'A(':  stack.push('('); break;
+      case 'AN(': stack.push('NOT ('); break;
+      case 'O(':  stack.push('OR ('); break;
+      case 'ON(': stack.push('OR NOT ('); break;
+      case ')': {
+        // Collect everything back to the opening bracket
+        const group = [];
+        while (stack.length > 0) {
+          const item = stack.pop();
+          if (item === '(' || item.endsWith('(')) {
+            const prefix = item.replace('(', '').trim();
+            const inner = group.reverse().join(' AND ');
+            stack.push(prefix ? `${prefix}(${inner})` : `(${inner})`);
+            break;
+          }
+          group.push(item);
+        }
+        break;
+      }
+
+      // Load/Transfer
+      case 'L':
+        akku2 = akku1;
+        akku1 = named;
+        break;
+      case 'T':
+        if (akku1) {
+          result.push(`${named} := ${akku1}${akku2 ? ` [from ${akku2}]` : ''}`);
+        }
+        break;
+
+      // Comparisons
+      case '==I': case '==R': case '==D':
+        if (akku1 && akku2) stack.push(`${akku2} == ${akku1}`);
+        break;
+      case '<>I': case '<>R': case '<>D':
+        if (akku1 && akku2) stack.push(`${akku2} != ${akku1}`);
+        break;
+      case '>I': case '>R': case '>D':
+        if (akku1 && akku2) stack.push(`${akku2} > ${akku1}`);
+        break;
+      case '<I': case '<R': case '<D':
+        if (akku1 && akku2) stack.push(`${akku2} < ${akku1}`);
+        break;
+      case '>=I': case '>=R': case '>=D':
+        if (akku1 && akku2) stack.push(`${akku2} >= ${akku1}`);
+        break;
+      case '<=I': case '<=R': case '<=D':
+        if (akku1 && akku2) stack.push(`${akku2} <= ${akku1}`);
+        break;
+
+      // Arithmetic
+      case '+I': case '+R': case '+D':
+        if (akku1 && akku2) { akku1 = `${akku2} + ${akku1}`; akku2 = null; }
+        break;
+      case '-I': case '-R': case '-D':
+        if (akku1 && akku2) { akku1 = `${akku2} - ${akku1}`; akku2 = null; }
+        break;
+      case '*I': case '*R': case '*D':
+        if (akku1 && akku2) { akku1 = `${akku2} * ${akku1}`; akku2 = null; }
+        break;
+      case '/I': case '/R': case '/D':
+        if (akku1 && akku2) { akku1 = `${akku2} / ${akku1}`; akku2 = null; }
+        break;
+
+      // Assignment
+      case '=':
+        if (stack.length > 0) {
+          const expr = stack.join(' AND ');
+          result.push(`${named} := ${expr}`);
+        }
+        break;
+      case 'S':
+        if (stack.length > 0) {
+          result.push(`SET ${named} WHEN ${stack.join(' AND ')}`);
+        }
+        break;
+      case 'R':
+        if (stack.length > 0) {
+          result.push(`RESET ${named} WHEN ${stack.join(' AND ')}`);
+        }
+        break;
+
+      // DB/DI context — skip for readability
+      case 'OPN': case 'CDB': case 'BLD': case 'NOP': case 'TAR2':
+      case 'LAR2': case 'BE': case 'BEU': case 'BEC':
+        break;
+
+      // Calls
+      case 'UC': case 'CC':
+        result.push(`CALL ${operand}`);
+        break;
+
+      // Conversions
+      case 'ITD': case 'DTR': case 'BTI': case 'BTD': case 'DTB':
+        if (akku1) akku1 = `${op}(${akku1})`;
+        break;
+
+      default:
+        // Skip unknowns silently
+        break;
+    }
+  }
+
+  // Flush remaining stack
+  if (stack.length > 0 && result.length === 0) {
+    result.push(stack.join(' AND '));
+  }
+
+  return result.length > 0 ? result.join('; ') : null;
+}
+
+/**
+ * Clean up SCL by adding spaces around operators for readability.
+ */
+function cleanSCL(scl) {
+  if (!scl) return null;
+  // Add spaces around := and comparison operators
+  let clean = scl
+    .replace(/;/g, ';\n  ')
+    .replace(/THEN/g, ' THEN\n    ')
+    .replace(/ELSIF/g, '\n  ELSIF ')
+    .replace(/ELSE/g, '\n  ELSE\n    ')
+    .replace(/END_IF/g, '\n  END_IF')
+    .replace(/END_CASE/g, '\n  END_CASE');
+  // Limit length for prompt
+  if (clean.length > 1500) clean = clean.substring(0, 1500) + '...';
+  return clean;
+}
+
+/**
+ * Resolve an operand to its signal name if known.
+ */
+function resolveOperandName(operand, signalByAddr) {
+  if (!operand || !signalByAddr) return operand;
+  const norm = operand.replace(/\s+/g, '');
+  const sig = signalByAddr[norm];
+  if (sig && sig.name && sig.name.length > 1) {
+    return `${norm}(${sig.name})`;
+  }
+  return norm;
+}
+
+module.exports = { buildCrossReference, buildEnrichedContext, profileToText, awlToReadable };

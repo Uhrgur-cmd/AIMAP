@@ -273,9 +273,17 @@ function extractTiaFcFbInterfaces(parsed, result) {
 
       const block = { db_number: null, name: blockLabel, variables: [] };
 
-      const ifaces = findAllDeep(fcfb, 'SW.Blocks.Interface');
+      let ifaces = findAllDeep(fcfb, 'SW.Blocks.Interface');
+      if (!ifaces.length) {
+        const attrIface = fcfb?.AttributeList?.Interface;
+        if (attrIface) ifaces = [attrIface];
+      }
       for (const iface of ifaces) {
-        const secs = findAllDeep(iface, 'Section');
+        let secs = findAllDeep(iface, 'Section');
+        if (!secs.length && iface.Sections) {
+          const s = iface.Sections.Section || iface.Sections;
+          secs = Array.isArray(s) ? s : [s];
+        }
         for (const section of Array.isArray(secs) ? secs : [secs]) {
           const sectionName = section['@_Name'] || '';
           if (!sections.includes(sectionName)) continue;
@@ -320,10 +328,22 @@ function extractTiaBlocks(parsed, result) {
       variables: []
     };
 
-    const interfaces = findAllDeep(db, 'SW.Blocks.Interface');
+    // Try SW.Blocks.Interface (TIA V13-V16) and AttributeList.Interface (TIA V17+)
+    let interfaces = findAllDeep(db, 'SW.Blocks.Interface');
+    if (!interfaces.length) {
+      // TIA V17+: Interface is inside AttributeList directly
+      const attrIface = db?.AttributeList?.Interface;
+      if (attrIface) interfaces = [attrIface];
+    }
     for (const iface of interfaces) {
-      const sections = findAllDeep(iface, 'Section');
+      // Sections can be inside iface directly or inside iface.Sections
+      let sections = findAllDeep(iface, 'Section');
+      if (!sections.length && iface.Sections) {
+        const s = iface.Sections.Section || iface.Sections;
+        sections = Array.isArray(s) ? s : [s];
+      }
       for (const section of Array.isArray(sections) ? sections : [sections]) {
+        if (!section) continue;
         const sectionName = section['@_Name'] || 'Static';
         if (['Static', 'Input', 'Output', 'InOut'].includes(sectionName)) {
           extractMembers(section, block.variables, `DB${dbNumber}`, '');
@@ -428,39 +448,402 @@ function extractTiaNetworks(parsed, result, blockMeta) {
 
 /**
  * Try to extract logic expression from LAD/FBD network structure.
- * Looks for Call, Contact, Coil elements and builds expression string.
+ *
+ * TIA Portal stores LAD elements as <Part Name="Contact">, <Part Name="Coil">, etc.
+ * Each Part has Negated attributes and is connected via Wire elements.
+ * Access elements provide the actual signal references (via Component children).
+ *
+ * This builds a readable logic expression from the LAD structure.
  */
 function extractNetworkLogic(compileUnit, references) {
-  // Look for SCL code (plaintext, easiest)
+  // ── 1. Try SCL (StructuredText) — rebuild from Token/Access/Blank/NewLine ──
   const sclTexts = findAllDeep(compileUnit, 'StructuredText');
   if (sclTexts.length > 0) {
-    const scl = sclTexts.map(t => typeof t === 'string' ? t : (t['#text'] || '')).join('\n').trim();
-    if (scl) return scl;
+    for (const st of sclTexts) {
+      const scl = rebuildSCLFromTokens(st);
+      if (scl && scl.length > 5) return 'SCL: ' + scl;
+    }
   }
 
-  // Look for LAD/FBD elements (Contact = AND/OR input, Coil = output)
+  // ── 2. Try LAD/FBD via Part elements (TIA Portal format) ──
+  const allParts = findAllDeep(compileUnit, 'Part');
+  const allAccesses = findAllDeep(compileUnit, 'Access');
+  if (allParts.length > 0) {
+    const logic = extractLADFromParts(allParts, allAccesses, compileUnit, references);
+    if (logic) return logic;
+  }
+
+  // ── 3. Fallback: Try old-style Contact/Coil XML tags ──
   const contacts = findAllDeep(compileUnit, 'Contact');
   const coils = findAllDeep(compileUnit, 'Coil');
-
   if (contacts.length > 0 && references.length > 0) {
-    // Simple heuristic: if multiple contacts, likely AND chain
-    // This is a best-effort extraction, not a full LAD compiler
     const parts = [];
     for (const contact of contacts) {
       const negated = contact['@_Negated'] === 'true';
-      const name = getNestedValue(contact, 'Operand', 'Symbol', 'Component');
-      if (name) {
-        const addr = Array.isArray(name) ? name.map(c => c['@_Name'] || c).join('.') : (name['@_Name'] || name);
-        parts.push(negated ? `NOT ${addr}` : addr);
+      const comps = findAllDeep(contact, 'Component');
+      if (comps.length > 0) {
+        const addr = comps.map(c => c['@_Name'] || '').filter(Boolean).join('.');
+        if (addr) parts.push(negated ? `NOT ${addr}` : addr);
       }
     }
-    if (parts.length > 0) {
-      return parts.join(' AND ');
+    for (const coil of coils) {
+      const comps = findAllDeep(coil, 'Component');
+      if (comps.length > 0) {
+        const addr = comps.map(c => c['@_Name'] || '').filter(Boolean).join('.');
+        if (addr) parts.push('= ' + addr);
+      }
+    }
+    if (parts.length > 0) return 'LAD: ' + parts.join(' AND ');
+  }
+
+  return null;
+}
+
+/**
+ * Extract LAD logic from TIA FlgNet structure by tracing Wires.
+ *
+ * TIA XML LAD structure (FlgNet v1-v5, all TIA versions V13-V20):
+ *   <FlgNet>
+ *     <Parts>
+ *       <Access UId="21" Scope="GlobalVariable"> → Signal reference
+ *         <Symbol><Component Name="DB_Safety"/><Component Name="Emergency_Ok"/></Symbol>
+ *       </Access>
+ *       <Part Name="Contact" UId="26" />  → LAD instruction (may have Negated="true")
+ *       <Part Name="Coil" UId="31" />
+ *     </Parts>
+ *     <Wires>
+ *       <Wire UId="33">
+ *         <Powerrail />                     → Start of logic chain (power rail)
+ *         <NameCon UId="26" Name="in" />    → Connects to Part 26 input
+ *       </Wire>
+ *       <Wire UId="34">
+ *         <IdentCon UId="21" />             → Signal Access 21 (Emergency_Ok)
+ *         <NameCon UId="26" Name="operand"/>→ is the operand of Contact 26
+ *       </Wire>
+ *     </Wires>
+ *   </FlgNet>
+ *
+ * Wire tracing rules:
+ *   - IdentCon UId → references an Access element (signal name)
+ *   - NameCon UId + Name="operand" → the signal a Part reads/writes
+ *   - NameCon UId + Name="in" → power flow input to a Part
+ *   - NameCon UId + Name="out" → power flow output from a Part
+ *   - Wire with multiple NameCon "in" targets → OR branch (parallel paths)
+ *   - Powerrail → start of the chain
+ */
+function extractLADFromParts(parts, accesses, compileUnit, references) {
+  // ── Step 1: Build lookup maps from FlgNet ──
+  const accessMap = {};  // UId → signal name
+  const partMap = {};    // UId → { name, negated }
+  const wireOperand = {};  // partUId → signalName (from "operand" wires)
+  const wireInputs = {};   // partUId → [sourcePartUId or 'POWERRAIL']
+  const wireOutputs = {};  // partUId → [targetPartUId]
+
+  // Index Access elements (signal references)
+  for (const item of (accesses || [])) {
+    const uid = String(item['@_UId'] || '');
+    if (!uid) continue;
+    const comps = findAllDeep(item, 'Component');
+    const name = comps.map(c => c['@_Name'] || '').filter(Boolean).join('.');
+    if (name) accessMap[uid] = name;
+  }
+
+  // Index Part elements (instructions: Contact, Coil, TON, etc.)
+  for (const item of parts) {
+    const uid = String(item['@_UId'] || '');
+    if (!uid || !item['@_Name']) continue;
+    partMap[uid] = {
+      name: item['@_Name'],
+      negated: item['@_Negated'] === 'true',
+      version: item['@_Version'] || null
+    };
+  }
+
+  // ── Step 2: Trace all Wires ──
+  // Each Wire has flat children: Powerrail, IdentCon, NameCon, OpenCon
+  // First element is usually the source, rest are targets
+  const allWires = findAllDeep(compileUnit, 'Wire');
+  for (const wire of allWires) {
+    // Collect all connection elements from this Wire
+    const connections = [];
+    for (const key of ['Powerrail', 'IdentCon', 'NameCon', 'OpenCon']) {
+      if (wire[key] === undefined) continue;
+      if (key === 'Powerrail') {
+        connections.push({ type: 'Powerrail' });
+        continue;
+      }
+      const vals = Array.isArray(wire[key]) ? wire[key] : [wire[key]];
+      for (const v of vals) {
+        if (v && typeof v === 'object') {
+          connections.push({ type: key, uid: String(v['@_UId'] || ''), name: v['@_Name'] || '' });
+        }
+      }
+    }
+
+    if (connections.length < 2) continue;
+
+    // First connection is source, rest are targets
+    // But: IdentCon is always a signal source, NameCon with Name="out" is a part output (source)
+    // NameCon with Name="operand"/"in"/"IN" etc. are targets
+    let source = null;
+    const targets = [];
+
+    for (const con of connections) {
+      if (con.type === 'Powerrail') {
+        source = { type: 'POWERRAIL' };
+      } else if (con.type === 'IdentCon') {
+        source = { type: 'ACCESS', uid: con.uid, signal: accessMap[con.uid] || `?${con.uid}` };
+      } else if (con.type === 'OpenCon') {
+        // Unused — skip
+      } else if (con.type === 'NameCon') {
+        const pin = con.name;
+        if (pin === 'out' || pin === 'OUT' || pin === 'Q' || pin === 'ENO' || pin === 'eno') {
+          // This is a source (Part output)
+          source = { type: 'PART_OUT', uid: con.uid };
+        } else {
+          // This is a target (Part input/operand)
+          targets.push({ uid: con.uid, pin });
+        }
+      }
+    }
+
+    // Apply wire connections
+    if (!source) continue;
+    for (const target of targets) {
+      if (target.pin === 'operand') {
+        if (source.type === 'ACCESS') {
+          wireOperand[target.uid] = source.signal;
+        }
+      } else if (target.pin === 'PT' || target.pin === 'ET' || target.pin === 'pre' ||
+                 target.pin === 'in1' || target.pin === 'in2' || target.pin === 'en') {
+        // Timer/function parameter — store as additional operand info
+        if (source.type === 'ACCESS') {
+          // Store timer preset etc. as extra info
+          if (!wireOperand[target.uid]) wireOperand[target.uid] = '';
+          wireOperand[target.uid] += (wireOperand[target.uid] ? ', ' : '') + target.pin + '=' + source.signal;
+        }
+      } else {
+        // Power flow connection (in, IN, S, R, S1, R1, CLK, etc.)
+        if (!wireInputs[target.uid]) wireInputs[target.uid] = [];
+        if (source.type === 'POWERRAIL') {
+          wireInputs[target.uid].push('POWERRAIL');
+        } else if (source.type === 'PART_OUT') {
+          wireInputs[target.uid].push(source.uid);
+          if (!wireOutputs[source.uid]) wireOutputs[source.uid] = [];
+          wireOutputs[source.uid].push(target.uid);
+        } else if (source.type === 'ACCESS') {
+          wireInputs[target.uid].push('SIG:' + source.signal);
+        }
+      }
     }
   }
 
-  // Fallback: if we have references but no structured logic, return null
-  return null;
+  // ── Step 3: Build logic expression by tracing from Powerrail to Coils ──
+  // Find all Parts connected to Powerrail (start of chains)
+  const startParts = [];
+  for (const [uid, inputs] of Object.entries(wireInputs)) {
+    if (inputs.includes('POWERRAIL') && partMap[uid]) {
+      startParts.push(uid);
+    }
+  }
+
+  if (startParts.length === 0 && Object.keys(partMap).length === 0) return null;
+
+  // Recursive trace: build expression from a Part
+  function traceExpr(partUId, visited) {
+    if (visited.has(partUId)) return '(circular)';
+    visited.add(partUId);
+
+    const part = partMap[partUId];
+    if (!part) return wireOperand[partUId] || `?${partUId}`;
+
+    const operand = wireOperand[partUId] || '';
+    const neg = part.negated ? 'NOT ' : '';
+
+    // Get outputs of this Part
+    const outputs = wireOutputs[partUId] || [];
+
+    switch (part.name) {
+      case 'Contact':
+      case 'PContact':
+        return `${neg}${operand}`;
+
+      case 'Coil':
+        return `= ${operand}`;
+      case 'SCoil':
+        return `SET ${operand}`;
+      case 'RCoil':
+        return `RESET ${operand}`;
+      case 'SdCoil':
+      case 'SeCoil':
+        return `SET ${operand}`;
+      case 'SfCoil':
+        return `SET_FIRSTSCAN ${operand}`;
+      case 'ResetIECTimerCoil':
+        return `RESET_TIMER ${operand}`;
+
+      case 'Move':
+        return `MOVE → ${operand}`;
+      case 'Convert':
+        return `CONVERT → ${operand}`;
+
+      case 'TON': return `TON(${operand})`;
+      case 'TOF': return `TOF(${operand})`;
+      case 'TP':  return `TP(${operand})`;
+
+      case 'Ge': return '>=';
+      case 'Le': return '<=';
+      case 'Gt': return '>';
+      case 'Lt': return '<';
+      case 'Eq': return '==';
+      case 'Ne': return '!=';
+      case 'Add': return '+';
+      case 'Sub': return '-';
+      case 'Div': return '/';
+      case 'Mul': return '*';
+
+      case 'O':   return 'OR';
+      case 'Not': return 'NOT';
+
+      case 'Sr':   return `SR(${operand})`;
+      case 'Rs':   return `RS(${operand})`;
+      case 'PBox': return `P_TRIG(${operand})`;
+      case 'NBox': return `N_TRIG(${operand})`;
+
+      default:
+        return operand ? `${part.name}(${operand})` : part.name;
+    }
+  }
+
+  // ── Step 4: Walk the chain and build readable expression ──
+  const chains = [];
+
+  function walkChain(partUId, visited) {
+    if (visited.has(partUId)) return [];
+    visited.add(partUId);
+
+    const expr = traceExpr(partUId, new Set());
+    const result = [expr];
+
+    const outputs = wireOutputs[partUId] || [];
+    if (outputs.length === 1) {
+      result.push(...walkChain(outputs[0], visited));
+    } else if (outputs.length > 1) {
+      // OR branch: multiple outputs from same point
+      const branches = outputs.map(o => walkChain(o, new Set(visited)));
+      // Find where branches converge (common downstream Part)
+      if (branches.length === 2) {
+        result.push(`(${branches[0].join(' AND ')} OR ${branches[1].join(' AND ')})`);
+      } else {
+        const branchExprs = branches.map(b => b.join(' AND '));
+        result.push(`(${branchExprs.join(' OR ')})`);
+      }
+    }
+
+    return result;
+  }
+
+  for (const startUId of startParts) {
+    const chain = walkChain(startUId, new Set());
+    if (chain.length > 0) {
+      chains.push(chain);
+    }
+  }
+
+  // Also extract Call elements
+  const calls = findAllDeep(compileUnit, 'Call');
+  for (const call of calls) {
+    const callInfo = findAllDeep(call, 'CallInfo');
+    for (const ci of callInfo) {
+      const blockName = ci['@_Name'] || '';
+      const blockType = ci['@_BlockType'] || '';
+      if (blockName) chains.push([`CALL ${blockType} "${blockName}"`]);
+    }
+  }
+
+  if (chains.length === 0) return null;
+
+  // Combine all chains into one expression
+  const parts_str = chains.map(c => c.join(' AND ')).join('; ');
+  return parts_str.length > 3 ? 'LAD: ' + parts_str : null;
+}
+
+/**
+ * Rebuild SCL source text from TIA XML StructuredText token stream.
+ * Works for all TIA versions (V13-V20) — the token structure is consistent.
+ * Processes elements in document order using UId attributes for sorting.
+ */
+function rebuildSCLFromTokens(stNode) {
+  if (!stNode || typeof stNode !== 'object') return '';
+
+  // Collect all leaf elements with UId for ordering
+  const elements = [];
+  function collect(obj, depth) {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) { obj.forEach(item => collect(item, depth)); return; }
+
+    const uid = parseInt(obj['@_UId'] || '0');
+
+    // Token: operator, keyword, punctuation
+    if (obj['@_Text'] !== undefined) {
+      elements.push({ uid, type: 'token', text: obj['@_Text'] });
+      return;
+    }
+
+    // Blank
+    for (const key of Object.keys(obj)) {
+      if (key === 'Blank') { elements.push({ uid: uid || elements.length + 10000, type: 'blank' }); }
+      if (key === 'NewLine') { elements.push({ uid: uid || elements.length + 10000, type: 'newline' }); }
+
+      if (key === 'Token') {
+        const tks = Array.isArray(obj[key]) ? obj[key] : [obj[key]];
+        tks.forEach(tk => {
+          if (tk['@_Text']) elements.push({ uid: parseInt(tk['@_UId'] || '0'), type: 'token', text: tk['@_Text'] });
+        });
+      }
+
+      if (key === 'Access') {
+        const accs = Array.isArray(obj[key]) ? obj[key] : [obj[key]];
+        for (const a of accs) {
+          const aUid = parseInt(a['@_UId'] || '0');
+          if (a['Symbol']) {
+            const comps = a['Symbol']['Component'] || [];
+            const arr = Array.isArray(comps) ? comps : [comps];
+            const path = arr.map(c => c['@_Name'] || '').filter(Boolean).join('.');
+            if (path) elements.push({ uid: aUid, type: 'var', text: path, scope: a['@_Scope'] });
+          } else if (a['Constant']) {
+            const c = a['Constant'];
+            let val = '';
+            if (c['StringValue']) {
+              val = typeof c['StringValue'] === 'string' ? c['StringValue'] : (c['StringValue']['#text'] || '');
+              val = "'" + val + "'";
+            } else if (c['ConstantValue']) {
+              val = typeof c['ConstantValue'] === 'object' ? (c['ConstantValue']['#text'] || '0') : String(c['ConstantValue']);
+            }
+            if (val) elements.push({ uid: aUid, type: 'const', text: val });
+          }
+        }
+      }
+
+      // Recurse into sub-elements (but skip already handled keys)
+      if (!['Token', 'Access', 'Blank', 'NewLine', '@_UId', '@_Text', '@_Scope', '@_Name', 'Comment'].includes(key)) {
+        if (typeof obj[key] === 'object') collect(obj[key], depth + 1);
+      }
+    }
+  }
+  collect(stNode, 0);
+
+  // Sort by UId and rebuild text
+  elements.sort((a, b) => a.uid - b.uid);
+
+  let text = '';
+  for (const el of elements) {
+    if (el.type === 'blank') text += ' ';
+    else if (el.type === 'newline') text += '\n';
+    else if (el.type === 'token' || el.type === 'var' || el.type === 'const') text += el.text;
+  }
+
+  return text.trim();
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -933,7 +1316,7 @@ function parseStep7MC7Logic(dbfBuffer, dbtBuffer, result) {
           network_number: chain.startOffset || 0,
           comment: `MC7 Logic: ${chain.output} depends on [${inputAddrs.join(', ')}]`,
           signals_referenced: inputAddrs,
-          logic: logicStr ? logicStr.substring(0, 500) : null
+          logic: logicStr ? logicStr.substring(0, 2000) : null
         });
       }
     } catch (e) { /* skip blocks that fail to decode */ }

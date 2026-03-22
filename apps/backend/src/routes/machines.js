@@ -9,6 +9,7 @@ const { v4: uuidv4 } = require('uuid');
 const pool = require('../db/pool');
 const { parseProjectFile } = require('../services/project-parser');
 const { validateWithScanner } = require('../services/scan-validator');
+const { buildProgramFlow } = require('../services/program-flow');
 
 // Strip null bytes and invalid control characters before PostgreSQL insert
 function sanitize(str) {
@@ -178,6 +179,8 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
         [req.params.id]
       );
       await client.query('DELETE FROM network_comments WHERE machine_id = $1', [req.params.id]);
+      // Clear old mappings — new project means old mappings are invalid
+      await client.query('DELETE FROM mappings WHERE machine_id = $1', [req.params.id]);
 
       // Insert signals
       for (const block of parsed.blocks) {
@@ -192,7 +195,7 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
                comment = EXCLUDED.comment, block_name = EXCLUDED.block_name,
                live_confirmed = EXCLUDED.live_confirmed, live_value = EXCLUDED.live_value`,
             [
-              req.params.id, 'DB', block.db_number,
+              req.params.id, 'DB', parseInt(block.db_number) || 0,
               sanitize(block.name), sanitize(variable.name),
               sanitize(variable.address), sanitize(variable.type),
               sanitize(variable.comment),
@@ -207,7 +210,7 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
         await client.query(
           `INSERT INTO network_comments (machine_id, block_name, network_number, comment, signals_referenced, logic)
            VALUES ($1, $2, $3, $4, $5, $6)`,
-          [req.params.id, sanitize(network.block), network.network_number,
+          [req.params.id, sanitize(network.block), parseInt(network.network_number) || 0,
            sanitize(network.comment), network.signals_referenced, sanitize(network.logic) || null]
         );
       }
@@ -292,6 +295,19 @@ router.get('/:id/scan-progress', (req, res) => {
   res.set('Cache-Control', 'no-store');
   const progress = scanProgressStore.get(req.params.id);
   res.json(progress || { status: 'idle' });
+});
+
+// Get program flow analysis for a machine
+router.get('/:id/program-flow', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM machines WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Machine not found' });
+
+    const flowData = await buildProgramFlow(req.params.id);
+    res.json(flowData);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
