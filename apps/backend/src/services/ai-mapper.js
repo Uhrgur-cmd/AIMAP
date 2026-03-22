@@ -128,6 +128,11 @@ ${signalContext}
    Direct: "DB10.DBX4.0;"
    Expression: "DB321.DBX0.5 AND DB331.DBD2 > 0 AND NOT DB2.DBX0.1;"
    Operatoren: AND, OR, NOT, >, <, >=, <=, ==, !=, +, -, *, /
+   Typ-Konvertierungen: INT_TO_REAL(), DINT_TO_REAL(), REAL_TO_INT(), BOOL_TO_INT(), INT_TO_STRING(), etc.
+   Beispiel: "DINT_TO_REAL(DB1.DBD0) / 100;"
+   Beispiel: "INT_TO_REAL(DB10.DBW2) * 0.01;"
+   IF/THEN für berechnete Werte:
+   "IF DB15.DBX0.3 THEN 1 ELSIF DB15.DBX0.2 AND DB49.DBX49.0 THEN 2 ELSE 0 END_IF;"
 
 7. WENN NICHTS PASST → WEGLASSEN!
    Lieber kein Mapping als ein falsches. Nicht raten!
@@ -137,7 +142,9 @@ ${signalContext}
 Antworte NUR mit einem JSON Array. Jedes Element:
 [
   {"target":"Signal.Name","source":"DB10.DBX4.0;","type":"direct","confidence":0.95,"reason":"Kurze Begründung"},
-  {"target":"Signal.Name","expression":"DB321.DBX0.5 AND DB331.DBD2 > 0;","type":"expression","confidence":0.9,"reason":"..."}
+  {"target":"Signal.Name","expression":"DB321.DBX0.5 AND DB331.DBD2 > 0;","type":"expression","confidence":0.9,"reason":"..."},
+  {"target":"Signal.Name","expression":"DINT_TO_REAL(DB1.DBD0) / 100;","type":"expression","confidence":0.85,"reason":"..."},
+  {"target":"Signal.Name","expression":"IF DB1.DBX0.0 THEN 3 ELSIF DB1.DBX0.1 THEN 2 ELSE 0 END_IF;","type":"expression","confidence":0.8,"reason":"..."}
 ]
 Oder [] wenn nichts passt.`;
 
